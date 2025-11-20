@@ -372,30 +372,10 @@
 
         // Извлечение username из ссылки или текста
         function extractUsername(input) {
-            if (!input) return null;
-            
-            input = input.trim();
-            
-            // Если это ссылка t.me/username
-            const tmeMatch = input.match(/t\.me\/([a-zA-Z0-9_]+)/);
-            if (tmeMatch) {
-                return tmeMatch[1];
-            }
-            
-            // Если это ссылка https://t.me/username
-            const httpsMatch = input.match(/https?:\/\/t\.me\/([a-zA-Z0-9_]+)/);
-            if (httpsMatch) {
-                return httpsMatch[1];
-            }
-            
-            // Если это @username
-            if (input.startsWith('@')) {
-                return input.substring(1);
-            }
-            
-            // Если это просто username
-            return input;
-        }
+    if (!input) return null;
+    return input.trim(); // просто возвращаем как есть (может быть и ссылка)
+}
+
 
         // Добавление канала
         async function addChannel() {
