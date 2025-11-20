@@ -21,9 +21,8 @@ logger = logging.getLogger(__name__)
 PORT = int(os.getenv("PORT", "8000"))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # канал / чат, куда слать вакансии
-
-API_SECRET = os.getenv("API_SECRET", "mvp-secret-key-2024-xyz")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+API_SECRET = os.getenv("API_SECRET", "mvp-secret-key-2024")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
@@ -33,7 +32,7 @@ CORS(app)
 
 
 # ----------------- Вспомогалки -----------------
-def require_secret(req: request):
+def require_secret(req: request) -> bool:
     header_secret = req.headers.get("X-API-KEY")
     if not header_secret or header_secret != API_SECRET:
         return False
@@ -42,7 +41,9 @@ def require_secret(req: request):
 
 def send_to_telegram(text: str, url: str | None = None):
     if not bot or not TELEGRAM_CHAT_ID:
-        logger.warning("TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы — не отправляю в Telegram")
+        logger.warning(
+            "TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы — не отправляю в Telegram"
+        )
         return
 
     message = text
@@ -58,25 +59,28 @@ with app.app_context():
     logger.info("✅ DB initialized")
 
 
-# ----------------- Роуты -----------------
-
+# ----------------- Служебное -----------------
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
 
 
-# --------- Работа с FB-группами (для миниаппа и fb_parser) ----------
+# ===================== GROUPS (для fb_parser) =====================
 
 @app.route("/api/groups", methods=["GET"])
 def list_groups():
     """
-    Возвращает список FB-групп.
-    Используется миниаппом и fb_parser-ом.
+    Старый эндпоинт, который дергает fb-parser.
+    Работает поверх таблицы fb_groups.
     """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, group_id, group_name, enabled, added_at FROM fb_groups ORDER BY id ASC"
+        """
+        SELECT id, group_id, group_name, enabled, added_at
+        FROM fb_groups
+        ORDER BY id ASC
+        """
     )
     rows = cur.fetchall()
     conn.close()
@@ -155,7 +159,6 @@ def toggle_group(group_id: int):
             conn.rollback()
             conn.close()
             return jsonify({"error": "not_found"}), 404
-
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -195,18 +198,161 @@ def delete_group(group_id: int):
     return jsonify({"status": "deleted"})
 
 
-# --------- Приём вакансий от парсеров ----------
+# ===================== CHANNELS (для фронта miniapp) =====================
+
+@app.route("/api/channels", methods=["GET"])
+def list_channels():
+    """
+    Фронт вызывает /api/channels — делаем алиас над fb_groups.
+    username = то, что ты вводишь (может быть и ссылка на FB).
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, group_id, group_name, enabled, added_at
+        FROM fb_groups
+        ORDER BY id ASC
+        """
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    channels = []
+    for row in rows:
+        channels.append(
+            {
+                "id": row["id"],
+                "username": row["group_id"],
+                "title": row["group_name"],
+                "enabled": row["enabled"],
+                "added_at": row["added_at"].isoformat() if row["added_at"] else None,
+            }
+        )
+
+    return jsonify({"channels": channels})
+
+
+@app.route("/api/channels", methods=["POST"])
+def add_channel():
+    """
+    Фронт шлет { "username": "..." } — кладём это в fb_groups.group_id
+    """
+    data = request.get_json() or {}
+    username = data.get("username")
+
+    if not username:
+        return jsonify({"error": "username is required"}), 400
+
+    group_id = username
+    group_name = username
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO fb_groups (group_id, group_name, enabled)
+            VALUES (%s, %s, TRUE)
+            RETURNING id, group_id, group_name, enabled, added_at
+            """,
+            (group_id, group_name),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error(f"Ошибка добавления канала: {e}")
+        # Скорее всего дубликат по UNIQUE(group_id)
+        return jsonify({"error": "Канал уже добавлен или ошибка БД"}), 400
+
+    conn.close()
+    return jsonify(
+        {
+            "id": row["id"],
+            "username": row["group_id"],
+            "title": row["group_name"],
+            "enabled": row["enabled"],
+            "added_at": row["added_at"].isoformat() if row["added_at"] else None,
+        }
+    )
+
+
+@app.route("/api/channels/<int:channel_id>", methods=["DELETE"])
+def delete_channel(channel_id: int):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM fb_groups WHERE id = %s", (channel_id,))
+        deleted = cur.rowcount
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error(f"Ошибка удаления канала: {e}")
+        return jsonify({"error": "db_error"}), 500
+
+    conn.close()
+    if deleted == 0:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "deleted"})
+
+
+# ===================== JOBS (для вкладки "Вакансии") =====================
+
+@app.route("/api/jobs", methods=["GET"])
+def list_jobs():
+    """
+    Возвращаем список вакансий для фронта.
+    Фронт ждёт поля: chat_title, created_at, text, link.
+    """
+    try:
+        limit = int(request.args.get("limit", 50))
+    except ValueError:
+        limit = 50
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, source, source_name, url, text, created_at, received_at
+        FROM jobs
+        ORDER BY COALESCE(created_at, received_at) DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    jobs = []
+    for row in rows:
+        created = row["created_at"] or row["received_at"]
+        jobs.append(
+            {
+                "id": row["id"],
+                "chat_title": row["source_name"] or row["source"],
+                "created_at": created.isoformat() if created else None,
+                "text": row["text"],
+                "link": row["url"],
+            }
+        )
+
+    return jsonify({"jobs": jobs})
+
+
+# ===================== Приём постов от парсеров =====================
 
 @app.route("/post", methods=["POST"])
 def receive_post():
     """
     Парсеры (FB и TG) шлют сюда вакансии.
-    Формат JSON:
 
     {
       "source": "facebook" | "telegram",
       "source_name": "...",
-      "external_id": "...",   # post_id/message_id+chat_id
+      "external_id": "...",
       "url": "...",
       "text": "...",
       "created_at": "2025-11-18T14:30:00Z" | null
