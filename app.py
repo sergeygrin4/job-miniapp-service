@@ -25,6 +25,12 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
 
+@app.route("/debug_routes", methods=["GET"])
+def debug_routes():
+    routes = [str(r) for r in app.url_map.iter_rules()]
+    return jsonify({"routes": routes})
+
+
 
 def require_secret(req: request) -> bool:
     header_secret = req.headers.get("X-API-KEY")
