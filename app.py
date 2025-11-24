@@ -5,19 +5,16 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-
 from telegram import Bot
 
 from db import get_conn, init_db
 
-# ----------------- Логирование -----------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - mini_app - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# ----------------- Конфиг -----------------
 PORT = int(os.getenv("PORT", "8000"))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -26,12 +23,10 @@ API_SECRET = os.getenv("API_SECRET", "mvp-secret-key-2024")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
-# ----------------- Flask -----------------
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
 
 
-# ----------------- Вспомогалки -----------------
 def require_secret(req: request) -> bool:
     header_secret = req.headers.get("X-API-KEY")
     if not header_secret or header_secret != API_SECRET:
@@ -39,40 +34,32 @@ def require_secret(req: request) -> bool:
     return True
 
 
-def send_to_telegram(text: str, url: str | None = None):
+def send_to_telegram(text: str, url: str | None = None) -> None:
     if not bot or not TELEGRAM_CHAT_ID:
         logger.warning(
             "TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы — не отправляю в Telegram"
         )
         return
-
     message = text
     if url:
         message += f"\n\n{url}"
-
     bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
 
-# ----------------- Инициализация БД -----------------
 with app.app_context():
     init_db()
     logger.info("✅ DB initialized")
 
 
-# ----------------- Служебное -----------------
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
 
 
-# ===================== GROUPS (для fb_parser) =====================
+# ================== groups (для fb_parser) ==================
 
 @app.route("/api/groups", methods=["GET"])
 def list_groups():
-    """
-    Старый эндпоинт, который дергает fb-parser.
-    Работает поверх таблицы fb_groups.
-    """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -96,7 +83,6 @@ def list_groups():
                 "added_at": row["added_at"].isoformat() if row["added_at"] else None,
             }
         )
-
     return jsonify({"groups": groups})
 
 
@@ -105,7 +91,6 @@ def add_group():
     data = request.get_json() or {}
     group_id = data.get("group_id")
     group_name = data.get("group_name") or group_id
-
     if not group_id:
         return jsonify({"error": "group_id is required"}), 400
 
@@ -127,7 +112,6 @@ def add_group():
         conn.close()
         logger.error(f"Ошибка добавления группы: {e}")
         return jsonify({"error": "db_error"}), 500
-
     conn.close()
     return jsonify(
         {
@@ -165,7 +149,6 @@ def toggle_group(group_id: int):
         conn.close()
         logger.error(f"Ошибка переключения группы: {e}")
         return jsonify({"error": "db_error"}), 500
-
     conn.close()
     return jsonify(
         {
@@ -191,21 +174,16 @@ def delete_group(group_id: int):
         conn.close()
         logger.error(f"Ошибка удаления группы: {e}")
         return jsonify({"error": "db_error"}), 500
-
     conn.close()
     if deleted == 0:
         return jsonify({"error": "not_found"}), 404
     return jsonify({"status": "deleted"})
 
 
-# ===================== CHANNELS (для фронта miniapp) =====================
+# ================== channels (под фронт) ==================
 
 @app.route("/api/channels", methods=["GET"])
 def list_channels():
-    """
-    Фронт вызывает /api/channels — делаем алиас над fb_groups.
-    username = то, что ты вводишь (может быть и ссылка на FB).
-    """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -229,18 +207,13 @@ def list_channels():
                 "added_at": row["added_at"].isoformat() if row["added_at"] else None,
             }
         )
-
     return jsonify({"channels": channels})
 
 
 @app.route("/api/channels", methods=["POST"])
 def add_channel():
-    """
-    Фронт шлет { "username": "..." } — кладём это в fb_groups.group_id
-    """
     data = request.get_json() or {}
     username = data.get("username")
-
     if not username:
         return jsonify({"error": "username is required"}), 400
 
@@ -264,9 +237,7 @@ def add_channel():
         conn.rollback()
         conn.close()
         logger.error(f"Ошибка добавления канала: {e}")
-        # Скорее всего дубликат по UNIQUE(group_id)
-        return jsonify({"error": "Канал уже добавлен или ошибка БД"}), 400
-
+        return jsonify({"error": "db_error"}), 400
     conn.close()
     return jsonify(
         {
@@ -292,21 +263,16 @@ def delete_channel(channel_id: int):
         conn.close()
         logger.error(f"Ошибка удаления канала: {e}")
         return jsonify({"error": "db_error"}), 500
-
     conn.close()
     if deleted == 0:
         return jsonify({"error": "not_found"}), 404
     return jsonify({"status": "deleted"})
 
 
-# ===================== JOBS (для вкладки "Вакансии") =====================
+# ================== jobs (под вкладку "Вакансии") ==================
 
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs():
-    """
-    Возвращаем список вакансий для фронта.
-    Фронт ждёт поля: chat_title, created_at, text, link.
-    """
     try:
         limit = int(request.args.get("limit", 50))
     except ValueError:
@@ -338,26 +304,13 @@ def list_jobs():
                 "link": row["url"],
             }
         )
-
     return jsonify({"jobs": jobs})
 
 
-# ===================== Приём постов от парсеров =====================
+# ================== приём вакансий от парсеров ==================
 
 @app.route("/post", methods=["POST"])
 def receive_post():
-    """
-    Парсеры (FB и TG) шлют сюда вакансии.
-
-    {
-      "source": "facebook" | "telegram",
-      "source_name": "...",
-      "external_id": "...",
-      "url": "...",
-      "text": "...",
-      "created_at": "2025-11-18T14:30:00Z" | null
-    }
-    """
     if not require_secret(request):
         return jsonify({"error": "forbidden"}), 403
 
@@ -377,7 +330,7 @@ def receive_post():
         try:
             created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
         except Exception:
-            pass
+            created_at = None
 
     conn = get_conn()
     cur = conn.cursor()
@@ -398,14 +351,11 @@ def receive_post():
         conn.close()
         logger.error(f"Ошибка записи вакансии: {e}")
         return jsonify({"error": "db_error"}), 500
-
     conn.close()
 
     if not row:
-        # уже есть такая вакансия
         return jsonify({"status": "duplicate"})
 
-    # новая вакансия — отправляем в Telegram
     try:
         send_to_telegram(text, url)
     except Exception as e:
@@ -414,14 +364,10 @@ def receive_post():
     return jsonify({"status": "ok", "id": row[0]})
 
 
-# --------- Статика для миниаппа ----------
-
 @app.route("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
 
-
-# ----------------- Запуск -----------------
 
 if __name__ == "__main__":
     logger.info(f"Запуск Flask на порту {PORT}")
