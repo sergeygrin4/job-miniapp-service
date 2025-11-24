@@ -1,9 +1,7 @@
-# db.py
 import os
 import psycopg2
 from psycopg2.extras import DictCursor
 
-# Railway может отдавать DATABASE_URL или DATABASE_PUBLIC_URL
 DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_PUBLIC_URL")
 
 
@@ -17,12 +15,11 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
-    # Таблица с группами/каналами (FB / TG и т.п.)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS fb_groups (
             id SERIAL PRIMARY KEY,
-            group_id TEXT NOT NULL UNIQUE,   -- ссылка или username
+            group_id TEXT NOT NULL UNIQUE,
             group_name TEXT,
             enabled BOOLEAN NOT NULL DEFAULT TRUE,
             added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -30,14 +27,13 @@ def init_db():
         """
     )
 
-    # Таблица с вакансиями
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS jobs (
             id SERIAL PRIMARY KEY,
-            source TEXT NOT NULL,              -- 'facebook' или 'telegram'
+            source TEXT NOT NULL,
             source_name TEXT,
-            external_id TEXT NOT NULL,         -- уникальный id поста в рамках source
+            external_id TEXT NOT NULL,
             url TEXT,
             text TEXT,
             created_at TIMESTAMPTZ,
