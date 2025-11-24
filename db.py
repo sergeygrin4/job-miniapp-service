@@ -2,7 +2,7 @@ import os
 import psycopg2
 from psycopg2.extras import DictCursor
 
-DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_PUBLIC_URL")
+DATABASE_URL = postgresql://postgres:odpMkCdljFCHjpZqvUXYkLHiFltvPFrk@postgres.railway.internal:5432/railway
 
 
 def get_conn():
