@@ -33,9 +33,7 @@ CORS(app)
 # ----------------- Вспомогалки -----------------
 def require_secret(req: request) -> bool:
     header_secret = req.headers.get("X-API-KEY")
-    if not header_secret or header_secret != API_SECRET:
-        return False
-    return True
+    return bool(header_secret and header_secret == API_SECRET)
 
 
 def send_to_telegram(text: str, url: str | None = None) -> None:
@@ -186,7 +184,7 @@ def delete_group(group_id: int):
     return jsonify({"status": "deleted"})
 
 
-# ================== CHANNELS (API под фронт «Каналы») ==================
+# ================== CHANNELS (под фронт «Каналы») ==================
 
 @app.route("/api/channels", methods=["GET"])
 def list_channels():
@@ -208,7 +206,6 @@ def list_channels():
         conn.close()
     except Exception as e:
         logger.error(f"Ошибка загрузки каналов: {e}")
-        # Возвращаем пустой список, чтобы фронт не падал
         return jsonify({"channels": []})
 
     channels = []
@@ -229,7 +226,7 @@ def list_channels():
 def add_channel():
     """
     Фронт шлёт:
-    { "username": "что-то" }
+    { "username": "..." }
     Мы просто кладём это в fb_groups.group_id/group_name.
     """
     data = request.get_json() or {}
@@ -257,7 +254,6 @@ def add_channel():
         conn.rollback()
         conn.close()
         logger.error(f"Ошибка добавления канала: {e}")
-        # фронт в этом случае читает JSON и показывает текст из error
         return jsonify({"error": "Канал уже добавлен или ошибка БД"}), 400
     conn.close()
     return jsonify(
@@ -320,7 +316,6 @@ def list_jobs():
         conn.close()
     except Exception as e:
         logger.error(f"Ошибка загрузки вакансий: {e}")
-        # Возвращаем пустой список, чтобы фронт не падал и не показывал красную ошибку
         return jsonify({"jobs": [], "total": 0})
 
     jobs = []
@@ -342,18 +337,6 @@ def list_jobs():
 
 @app.route("/post", methods=["POST"])
 def receive_post():
-    """
-    Парсеры (FB и TG) шлют сюда:
-
-    {
-      "source": "facebook" | "telegram",
-      "source_name": "...",
-      "external_id": "...",
-      "url": "...",
-      "text": "...",
-      "created_at": "2025-11-18T14:30:00Z" | null
-    }
-    """
     if not require_secret(request):
         return jsonify({"error": "forbidden"}), 403
 
@@ -408,7 +391,6 @@ def receive_post():
 
 
 # ================== Статика ==================
-
 @app.route("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
