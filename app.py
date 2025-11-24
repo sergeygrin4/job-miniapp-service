@@ -8,14 +8,12 @@ from telegram import Bot
 
 from db import get_conn, init_db
 
-# ----------------- Логирование -----------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - mini_app - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# ----------------- Конфиг -----------------
 PORT = int(os.getenv("PORT", "8000"))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -24,7 +22,6 @@ API_SECRET = os.getenv("API_SECRET", "mvp-secret-key-2024")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
-# ----------------- Flask -----------------
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
 
@@ -46,19 +43,18 @@ def send_to_telegram(text: str, url: str | None = None) -> None:
     bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
 
-# ----------------- Инициализация БД -----------------
 with app.app_context():
     init_db()
     logger.info("✅ DB initialized")
 
 
-# ================== health ==================
+# ---------------- health ----------------
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
 
 
-# ================== GROUPS (для fb_parser) ==================
+# ---------------- GROUPS (для fb_parser) ----------------
 @app.route("/api/groups", methods=["GET"])
 def list_groups():
     conn = get_conn()
@@ -181,7 +177,7 @@ def delete_group(group_id: int):
     return jsonify({"status": "deleted"})
 
 
-# ================== CHANNELS (под фронт «Каналы») ==================
+# ---------------- CHANNELS (под вкладку «Каналы») ----------------
 @app.route("/api/channels", methods=["GET"])
 def list_channels():
     try:
@@ -273,13 +269,9 @@ def delete_channel(channel_id: int):
     return jsonify({"status": "deleted"})
 
 
-# ================== JOBS (под вкладку «Вакансии») ==================
+# ---------------- JOBS (под вкладку «Вакансии») ----------------
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs():
-    """
-    Фронт ждёт:
-    { "jobs": [...], "total": число }
-    """
     try:
         limit_str = request.args.get("limit", "50")
         try:
@@ -319,7 +311,7 @@ def list_jobs():
     return jsonify({"jobs": jobs, "total": len(jobs)})
 
 
-# ================== Приём вакансий от парсеров ==================
+# ---------------- Приём вакансий от парсеров ----------------
 @app.route("/post", methods=["POST"])
 def receive_post():
     if not require_secret(request):
@@ -375,12 +367,12 @@ def receive_post():
     return jsonify({"status": "ok", "id": row[0]})
 
 
-# ================== Статика ==================
+# ---------------- Статика ----------------
 @app.route("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
 if __name__ == "__main__":
-    logger.info(f"Запуск Flask на порту {PORT}")
+    logger.info("Запуск Flask на порту %s", PORT)
     app.run(host="0.0.0.0", port=PORT)
