@@ -8,12 +8,14 @@ from telegram import Bot
 
 from db import get_conn, init_db
 
+# ----------------- Логирование -----------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - mini_app - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+# ----------------- Конфиг -----------------
 PORT = int(os.getenv("PORT", "8000"))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -22,6 +24,7 @@ API_SECRET = os.getenv("API_SECRET", "mvp-secret-key-2024")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
+# ----------------- Flask -----------------
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
 
@@ -43,6 +46,7 @@ def send_to_telegram(text: str, url: str | None = None) -> None:
     bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
 
+# ----------------- Инициализация БД -----------------
 with app.app_context():
     init_db()
     logger.info("✅ DB initialized")
@@ -272,6 +276,10 @@ def delete_channel(channel_id: int):
 # ================== JOBS (под вкладку «Вакансии») ==================
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs():
+    """
+    Фронт ждёт:
+    { "jobs": [...], "total": число }
+    """
     try:
         limit_str = request.args.get("limit", "50")
         try:
