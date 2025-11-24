@@ -9,12 +9,14 @@ from telegram import Bot
 
 from db import get_conn, init_db
 
+# ----------------- Логирование -----------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - mini_app - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+# ----------------- Конфиг -----------------
 PORT = int(os.getenv("PORT", "8000"))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -23,10 +25,12 @@ API_SECRET = os.getenv("API_SECRET", "mvp-secret-key-2024")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else None
 
+# ----------------- Flask -----------------
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
 
 
+# ----------------- Вспомогалки -----------------
 def require_secret(req: request) -> bool:
     header_secret = req.headers.get("X-API-KEY")
     if not header_secret or header_secret != API_SECRET:
@@ -46,17 +50,19 @@ def send_to_telegram(text: str, url: str | None = None) -> None:
     bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
 
 
+# ----------------- Инициализация БД -----------------
 with app.app_context():
     init_db()
     logger.info("✅ DB initialized")
 
 
+# ================== Служебное ==================
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
 
 
-# ================== groups (для fb_parser) ==================
+# ================== GROUPS (для fb_parser) ==================
 
 @app.route("/api/groups", methods=["GET"])
 def list_groups():
@@ -180,21 +186,30 @@ def delete_group(group_id: int):
     return jsonify({"status": "deleted"})
 
 
-# ================== channels (под фронт) ==================
+# ================== CHANNELS (API под фронт «Каналы») ==================
 
 @app.route("/api/channels", methods=["GET"])
 def list_channels():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT id, group_id, group_name, enabled, added_at
-        FROM fb_groups
-        ORDER BY id ASC
-        """
-    )
-    rows = cur.fetchall()
-    conn.close()
+    """
+    Фронт ждёт:
+    { "channels": [ { id, username, title, enabled, added_at }, ... ] }
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, group_id, group_name, enabled, added_at
+            FROM fb_groups
+            ORDER BY id ASC
+            """
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Ошибка загрузки каналов: {e}")
+        # Возвращаем пустой список, чтобы фронт не падал
+        return jsonify({"channels": []})
 
     channels = []
     for row in rows:
@@ -212,6 +227,11 @@ def list_channels():
 
 @app.route("/api/channels", methods=["POST"])
 def add_channel():
+    """
+    Фронт шлёт:
+    { "username": "что-то" }
+    Мы просто кладём это в fb_groups.group_id/group_name.
+    """
     data = request.get_json() or {}
     username = data.get("username")
     if not username:
@@ -237,7 +257,8 @@ def add_channel():
         conn.rollback()
         conn.close()
         logger.error(f"Ошибка добавления канала: {e}")
-        return jsonify({"error": "db_error"}), 400
+        # фронт в этом случае читает JSON и показывает текст из error
+        return jsonify({"error": "Канал уже добавлен или ошибка БД"}), 400
     conn.close()
     return jsonify(
         {
@@ -269,28 +290,38 @@ def delete_channel(channel_id: int):
     return jsonify({"status": "deleted"})
 
 
-# ================== jobs (под вкладку "Вакансии") ==================
+# ================== JOBS (под вкладку «Вакансии») ==================
 
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs():
+    """
+    Фронт ждёт:
+    { "jobs": [...], "total": число }
+    """
     try:
-        limit = int(request.args.get("limit", 50))
-    except ValueError:
-        limit = 50
+        limit_str = request.args.get("limit", "50")
+        try:
+            limit = int(limit_str)
+        except (TypeError, ValueError):
+            limit = 50
 
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT id, source, source_name, url, text, created_at, received_at
-        FROM jobs
-        ORDER BY COALESCE(created_at, received_at) DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
-    rows = cur.fetchall()
-    conn.close()
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, source, source_name, url, text, created_at, received_at
+            FROM jobs
+            ORDER BY COALESCE(created_at, received_at) DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Ошибка загрузки вакансий: {e}")
+        # Возвращаем пустой список, чтобы фронт не падал и не показывал красную ошибку
+        return jsonify({"jobs": [], "total": 0})
 
     jobs = []
     for row in rows:
@@ -304,13 +335,25 @@ def list_jobs():
                 "link": row["url"],
             }
         )
-    return jsonify({"jobs": jobs})
+    return jsonify({"jobs": jobs, "total": len(jobs)})
 
 
-# ================== приём вакансий от парсеров ==================
+# ================== Приём вакансий от парсеров ==================
 
 @app.route("/post", methods=["POST"])
 def receive_post():
+    """
+    Парсеры (FB и TG) шлют сюда:
+
+    {
+      "source": "facebook" | "telegram",
+      "source_name": "...",
+      "external_id": "...",
+      "url": "...",
+      "text": "...",
+      "created_at": "2025-11-18T14:30:00Z" | null
+    }
+    """
     if not require_secret(request):
         return jsonify({"error": "forbidden"}), 403
 
@@ -364,11 +407,14 @@ def receive_post():
     return jsonify({"status": "ok", "id": row[0]})
 
 
+# ================== Статика ==================
+
 @app.route("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+# ----------------- Запуск -----------------
 if __name__ == "__main__":
     logger.info(f"Запуск Flask на порту {PORT}")
     app.run(host="0.0.0.0", port=PORT)
