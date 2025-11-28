@@ -5,22 +5,27 @@ import psycopg2.extras
 DATABASE_URL = os.getenv("DATABASE_URL")   # <-- только так!
 
 def get_conn():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor,
+    )
 
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
+    # Таблица источников (каналы / группы Telegram)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS fb_groups (
         id SERIAL PRIMARY KEY,
-        group_id TEXT NOT NULL,
+        group_id TEXT NOT NULL UNIQUE,
         group_name TEXT,
-        enabled BOOLEAN DEFAULT TRUE,
-        added_at TIMESTAMPTZ DEFAULT NOW()
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     """)
 
+    # Таблица вакансий
     cur.execute("""
     CREATE TABLE IF NOT EXISTS jobs (
         id SERIAL PRIMARY KEY,
@@ -31,8 +36,20 @@ def init_db():
         text TEXT,
         created_at TIMESTAMPTZ,
         received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        archived BOOLEAN NOT NULL DEFAULT FALSE,
+        archived_at TIMESTAMPTZ,
         UNIQUE (external_id, source)
     );
+    """)
+
+    # На случай, если таблица jobs уже была создана раньше без новых полей
+    cur.execute("""
+        ALTER TABLE jobs
+        ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
+    """)
+    cur.execute("""
+        ALTER TABLE jobs
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
     """)
 
     conn.commit()
