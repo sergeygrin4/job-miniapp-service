@@ -16,25 +16,23 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             background: var(--tg-theme-bg-color, #ffffff);
             color: var(--tg-theme-text-color, #000000);
-            padding: 16px;
-            padding-bottom: 80px;
+            padding: 12px;
         }
 
-        .header {
-            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            padding: 16px;
-            border-radius: 12px;
-            margin-bottom: 16px;
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
         }
 
         h1 {
-            font-size: 24px;
+            font-size: 22px;
             margin-bottom: 8px;
         }
 
-        .stats {
+        .subtitle {
             font-size: 14px;
-            opacity: 0.7;
+            opacity: 0.8;
+            margin-bottom: 16px;
         }
 
         .tabs {
@@ -55,12 +53,10 @@
             border-radius: 8px;
             cursor: pointer;
             font-size: 14px;
-            font-weight: 500;
-            transition: all 0.2s;
         }
 
         .tab.active {
-            background: var(--tg-theme-button-color, #3390ec);
+            background: var(--tg-theme-button-color, #2481cc);
             color: var(--tg-theme-button-text-color, #ffffff);
         }
 
@@ -72,79 +68,113 @@
             display: block;
         }
 
+        .stats {
+            font-size: 13px;
+            margin-bottom: 12px;
+            opacity: 0.8;
+        }
+
         .job-card {
             background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            padding: 16px;
+            padding: 12px;
             border-radius: 12px;
-            margin-bottom: 12px;
+            margin-bottom: 10px;
+        }
+
+        .job-card.archived {
+            opacity: 0.9;
         }
 
         .job-header {
             display: flex;
             justify-content: space-between;
-            align-items: start;
+            gap: 8px;
             margin-bottom: 8px;
+        }
+
+        .job-channel,
+        .job-text,
+        .job-link {
+            word-wrap: break-word;
+            overflow-wrap: anywhere;
         }
 
         .job-channel {
             font-weight: 600;
-            color: var(--tg-theme-link-color, #3390ec);
             font-size: 14px;
         }
 
         .job-date {
             font-size: 12px;
-            opacity: 0.6;
+            opacity: 0.7;
+            flex-shrink: 0;
         }
 
         .job-text {
             font-size: 14px;
-            line-height: 1.5;
             margin-bottom: 8px;
-            max-height: 150px;
-            overflow: hidden;
+            white-space: pre-wrap;
         }
 
         .job-link {
-            display: inline-block;
-            color: var(--tg-theme-link-color, #3390ec);
+            font-size: 13px;
             text-decoration: none;
-            font-size: 14px;
         }
 
-        .channel-item {
-            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            padding: 16px;
-            border-radius: 12px;
-            margin-bottom: 12px;
+        .job-link a {
+            color: var(--tg-theme-link-color, #2481cc);
+        }
+
+        .job-actions {
+            margin-top: 8px;
             display: flex;
-            justify-content: space-between;
-            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
         }
 
-        .channel-info {
-            flex: 1;
+        .btn,
+        .secondary-btn,
+        .delete-btn {
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 8px 12px;
         }
 
-        .channel-username {
-            font-weight: 600;
-            font-size: 16px;
-            margin-bottom: 4px;
+        .btn {
+            background: var(--tg-theme-button-color, #2481cc);
+            color: var(--tg-theme-button-text-color, #ffffff);
         }
 
-        .channel-date {
-            font-size: 12px;
-            opacity: 0.6;
+        .secondary-btn {
+            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+            color: var(--tg-theme-text-color, #000000);
+            border: 1px solid rgba(0, 0, 0, 0.08);
         }
 
         .delete-btn {
-            background: #ff3b30;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
+            background: #ff4b4b;
+            color: #ffffff;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 24px 0;
             font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 24px 0;
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .empty-state-icon {
+            font-size: 28px;
+            margin-bottom: 8px;
         }
 
         .add-channel-form {
@@ -175,74 +205,108 @@
             color: var(--tg-theme-text-color, #000000);
         }
 
-        .btn {
-            width: 100%;
-            padding: 12px;
-            background: var(--tg-theme-button-color, #3390ec);
-            color: var(--tg-theme-button-text-color, #ffffff);
-            border: none;
+        .channels-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .channels-count {
+            font-size: 13px;
+            opacity: 0.8;
+        }
+
+        .channel-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+        }
+
+        .channel-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .channel-username {
+            font-size: 14px;
+            font-weight: 500;
+            word-wrap: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .channel-date {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        .channel-item .delete-btn {
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 480px) {
+            .channel-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .channel-item .delete-btn {
+                align-self: stretch;
+                text-align: center;
+            }
+
+            .job-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .job-date {
+                margin-top: 4px;
+            }
+        }
+
+        #error-message,
+        #success-message {
+            margin-bottom: 8px;
+        }
+
+        .error,
+        .success {
+            padding: 8px 12px;
             border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 40px 16px;
-            opacity: 0.6;
-        }
-
-        .empty-state-icon {
-            font-size: 48px;
-            margin-bottom: 16px;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 20px;
-            opacity: 0.6;
+            font-size: 13px;
         }
 
         .error {
-            background: #ff3b30;
-            color: white;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            font-size: 14px;
+            background: rgba(255, 75, 75, 0.12);
+            color: #d90429;
         }
 
         .success {
-            background: #34c759;
-            color: white;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            font-size: 14px;
+            background: rgba(76, 175, 80, 0.15);
+            color: #2e7d32;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>🔍 Поиск вакансий</h1>
-        <div class="stats" id="stats">Загрузка...</div>
-    </div>
+<div class="container">
+    <h1>Поиск вакансий</h1>
+    <div class="subtitle">Сбор вакансий из Telegram-каналов</div>
 
     <div class="tabs">
         <button class="tab active" onclick="switchTab('jobs')">Вакансии</button>
-        <button class="tab" onclick="switchTab('channels')">Каналы</button>
+        <button class="tab" onclick="switchTab('channels')">TG-каналы</button>
+        <button class="tab" onclick="switchTab('archive')">Архив</button>
     </div>
 
     <div id="error-message"></div>
     <div id="success-message"></div>
 
     <div id="jobs-tab" class="tab-content active">
+        <div id="stats" class="stats">Загрузка статистики...</div>
         <div id="jobs-list">
             <div class="loading">Загрузка вакансий...</div>
         </div>
@@ -252,13 +316,17 @@
         <div class="add-channel-form">
             <div class="input-group">
                 <label for="channel-username">Username или ссылка на канал</label>
-                <input 
-                    type="text" 
-                    id="channel-username" 
+                <input
+                    type="text"
+                    id="channel-username"
                     placeholder="@python_jobs, python_jobs или https://t.me/python_jobs"
                 >
             </div>
             <button class="btn" onclick="addChannel()">Добавить канал</button>
+        </div>
+
+        <div class="channels-header">
+            <div class="channels-count" id="channels-count"></div>
         </div>
 
         <div id="channels-list">
@@ -266,223 +334,359 @@
         </div>
     </div>
 
-    <script>
-        // Инициализация Telegram Web App
-        let tg = window.Telegram.WebApp;
-        tg.expand();
-        tg.ready();
+    <div id="archive-tab" class="tab-content">
+        <div id="archive-list">
+            <div class="loading">Загрузка архива...</div>
+        </div>
+    </div>
+</div>
 
-        // API endpoint
-        const API_BASE = window.location.origin;
+<script>
+    // Telegram WebApp init
+    let tg = window.Telegram.WebApp;
+    tg.expand();
+    tg.ready();
 
-        // Состояние
-        let currentTab = 'jobs';
+    const API_BASE = window.location.origin;
+    let currentTab = 'jobs';
 
-        // Переключение табов
-        function switchTab(tab) {
-            currentTab = tab;
-            
-            // Обновляем кнопки
-            document.querySelectorAll('.tab').forEach(btn => {
-                btn.classList.remove('active');
+    function switchTab(tab) {
+        currentTab = tab;
+
+        document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+        document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+        document.getElementById(`${tab}-tab`).classList.add('active');
+
+        if (tab === 'jobs') {
+            loadJobs();
+        } else if (tab === 'channels') {
+            loadChannels();
+        } else if (tab === 'archive') {
+            loadArchive();
+        }
+    }
+
+    // Jobs
+    async function loadJobs() {
+        try {
+            const response = await fetch(`${API_BASE}/api/jobs?limit=50`);
+            const data = await response.json();
+
+            const jobsList = document.getElementById('jobs-list');
+            const statsDiv = document.getElementById('stats');
+
+            if (data.stats) {
+                const total = data.stats.total || 0;
+                const last24 = data.stats.last_24h || 0;
+                statsDiv.textContent = `Всего активных вакансий: ${total}. За последние 24 часа: ${last24}.`;
+            } else {
+                statsDiv.textContent = '';
+            }
+
+            if (data.jobs && data.jobs.length > 0) {
+                jobsList.innerHTML = data.jobs.map(job => `
+                    <div class="job-card">
+                        <div class="job-header">
+                            <div class="job-channel">${escapeHtml(job.chat_title || '')}</div>
+                            <div class="job-date">${formatDate(job.created_at)}</div>
+                        </div>
+                        <div class="job-text">${escapeHtml(job.text || '')}</div>
+                        ${job.link ? `<div class="job-link"><a href="${job.link}" target="_blank">Открыть в Telegram →</a></div>` : ''}
+                        <div class="job-actions">
+                            <button class="secondary-btn" onclick="archiveJob(${job.id})">В архив</button>
+                            <button class="delete-btn" onclick="deleteJob(${job.id})">Удалить</button>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                jobsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🔎</div>
+                        <div>Пока нет вакансий</div>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки вакансий:', error);
+            showError('Ошибка загрузки вакансий');
+        }
+    }
+
+    // Archive
+    async function loadArchive() {
+        try {
+            const response = await fetch(`${API_BASE}/api/jobs/archive?limit=50`);
+            const data = await response.json();
+
+            const archiveList = document.getElementById('archive-list');
+
+            if (data.jobs && data.jobs.length > 0) {
+                archiveList.innerHTML = data.jobs.map(job => `
+                    <div class="job-card archived">
+                        <div class="job-header">
+                            <div class="job-channel">${escapeHtml(job.chat_title || '')}</div>
+                            <div class="job-date">${formatDate(job.created_at)}</div>
+                        </div>
+                        <div class="job-text">${escapeHtml(job.text || '')}</div>
+                        ${job.link ? `<div class="job-link"><a href="${job.link}" target="_blank">Открыть в Telegram →</a></div>` : ''}
+                        <div class="job-actions">
+                            <button class="secondary-btn" onclick="restoreJob(${job.id})">Вернуть</button>
+                            <button class="delete-btn" onclick="deleteJob(${job.id})">Удалить</button>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                archiveList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📦</div>
+                        <div>Архив пуст</div>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки архива:', error);
+            showError('Ошибка загрузки архива');
+        }
+    }
+
+    // Channels
+    async function loadChannels() {
+        try {
+            const response = await fetch(`${API_BASE}/api/channels`);
+            const data = await response.json();
+
+            const channelsList = document.getElementById('channels-list');
+            const channelsCount = document.getElementById('channels-count');
+
+            if (data.channels && data.channels.length > 0) {
+                channelsCount.textContent = `Всего TG-каналов: ${data.channels.length}`;
+                channelsList.innerHTML = data.channels.map(channel => `
+                    <div class="channel-item">
+                        <div class="channel-info">
+                            <div class="channel-username">${escapeHtml(channel.username)}</div>
+                            <div class="channel-date">Добавлен: ${formatDate(channel.added_at)}</div>
+                        </div>
+                        <button class="delete-btn" onclick="deleteChannel(${channel.id})">Удалить</button>
+                    </div>
+                `).join('');
+            } else {
+                channelsCount.textContent = 'Каналы не добавлены';
+                channelsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📢</div>
+                        <div>Пока не добавлено ни одного канала</div>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки каналов:', error);
+            showError('Ошибка загрузки каналов');
+        }
+    }
+
+    async function addChannel() {
+        const input = document.getElementById('channel-username');
+        const rawInput = input.value.trim();
+
+        if (!rawInput) {
+            showError('Введите username или ссылку на канал');
+            return;
+        }
+
+        const username = extractUsername(rawInput);
+
+        if (!username) {
+            showError('Неверный формат. Используйте: @username, username или https://t.me/username');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE}/api/channels`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ username })
             });
-            event.target.classList.add('active');
 
-            // Обновляем контент
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
+            const data = await response.json();
+
+            if (!response.ok) {
+                showError(data.error || 'Ошибка добавления канала');
+                return;
+            }
+
+            showSuccess(`Канал ${username} успешно добавлен`);
+            input.value = '';
+            loadChannels();
+        } catch (error) {
+            console.error('Ошибка добавления канала:', error);
+            showError('Ошибка добавления канала');
+        }
+    }
+
+    async function deleteChannel(channelId) {
+        if (!confirm('Удалить канал? Парсер перестанет его читать.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE}/api/channels/${channelId}`, {
+                method: 'DELETE'
             });
-            document.getElementById(`${tab}-tab`).classList.add('active');
 
-            // Загружаем данные
-            if (tab === 'jobs') {
+            const data = await response.json();
+
+            if (!response.ok) {
+                showError(data.error || 'Ошибка удаления канала');
+                return;
+            }
+
+            showSuccess('Канал удалён');
+            loadChannels();
+        } catch (error) {
+            console.error('Ошибка удаления канала:', error);
+            showError('Ошибка удаления канала');
+        }
+    }
+
+    // Job actions
+    async function archiveJob(jobId) {
+        try {
+            const response = await fetch(`${API_BASE}/api/jobs/${jobId}/archive`, {
+                method: 'POST'
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                showError(data.error || 'Ошибка архивации вакансии');
+                return;
+            }
+
+            showSuccess('Вакансия отправлена в архив');
+            loadJobs();
+        } catch (error) {
+            console.error('Ошибка архивации вакансии:', error);
+            showError('Ошибка архивации вакансии');
+        }
+    }
+
+    async function restoreJob(jobId) {
+        try {
+            const response = await fetch(`${API_BASE}/api/jobs/${jobId}/restore`, {
+                method: 'POST'
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                showError(data.error || 'Ошибка восстановления вакансии');
+                return;
+            }
+
+            showSuccess('Вакансия возвращена из архива');
+            loadArchive();
+        } catch (error) {
+            console.error('Ошибка восстановления вакансии:', error);
+            showError('Ошибка восстановления вакансии');
+        }
+    }
+
+    async function deleteJob(jobId) {
+        if (!confirm('Удалить вакансию навсегда?')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE}/api/jobs/${jobId}`, {
+                method: 'DELETE'
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                showError(data.error || 'Ошибка удаления вакансии');
+                return;
+            }
+
+            showSuccess('Вакансия удалена');
+            if (currentTab === 'jobs') {
                 loadJobs();
-            } else if (tab === 'channels') {
-                loadChannels();
+            } else if (currentTab === 'archive') {
+                loadArchive();
             }
+        } catch (error) {
+            console.error('Ошибка удаления вакансии:', error);
+            showError('Ошибка удаления вакансии');
+        }
+    }
+
+    // Utils
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        if (Number.isNaN(date.getTime())) return '';
+
+        const now = new Date();
+        const diff = now - date;
+
+        const minutes = Math.floor(diff / 60000);
+        const hours = Math.floor(diff / 3600000);
+        const days = Math.floor(diff / 86400000);
+
+        if (minutes < 1) return 'только что';
+        if (minutes < 60) return `${minutes} мин назад`;
+        if (hours < 24) return `${hours} ч назад`;
+        if (days < 7) return `${days} дн назад`;
+
+        return date.toLocaleDateString('ru-RU');
+    }
+
+    function showError(message) {
+        const errorDiv = document.getElementById('error-message');
+        errorDiv.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
+        setTimeout(() => {
+            errorDiv.innerHTML = '';
+        }, 3500);
+    }
+
+    function showSuccess(message) {
+        const successDiv = document.getElementById('success-message');
+        successDiv.innerHTML = `<div class="success">${escapeHtml(message)}</div>`;
+        setTimeout(() => {
+            successDiv.innerHTML = '';
+        }, 3000);
+    }
+
+    function extractUsername(input) {
+        let value = input.trim();
+
+        if (value.startsWith('https://t.me/')) {
+            value = value.replace('https://t.me/', '');
+        } else if (value.startsWith('http://t.me/')) {
+            value = value.replace('http://t.me/', '');
         }
 
-        // Загрузка вакансий
-        async function loadJobs() {
-            try {
-                const response = await fetch(`${API_BASE}/api/jobs?limit=50`);
-                const data = await response.json();
-
-                const jobsList = document.getElementById('jobs-list');
-                
-                if (data.jobs && data.jobs.length > 0) {
-                    jobsList.innerHTML = data.jobs.map(job => `
-                        <div class="job-card">
-                            <div class="job-header">
-                                <div class="job-channel">${escapeHtml(job.chat_title)}</div>
-                                <div class="job-date">${formatDate(job.created_at)}</div>
-                            </div>
-                            <div class="job-text">${escapeHtml(job.text)}</div>
-                            ${job.link ? `<a href="${job.link}" class="job-link" target="_blank">Открыть в Telegram →</a>` : ''}
-                        </div>
-                    `).join('');
-
-                    document.getElementById('stats').textContent = `Всего вакансий: ${data.total}`;
-                } else {
-                    jobsList.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-state-icon">📭</div>
-                            <div>Пока нет вакансий</div>
-                        </div>
-                    `;
-                    document.getElementById('stats').textContent = 'Нет данных';
-                }
-            } catch (error) {
-                console.error('Ошибка загрузки вакансий:', error);
-                showError('Ошибка загрузки вакансий');
-            }
+        if (value.startsWith('@')) {
+            value = value.slice(1);
         }
 
-        // Загрузка каналов
-        async function loadChannels() {
-            try {
-                const response = await fetch(`${API_BASE}/api/channels`);
-                const data = await response.json();
+        value = value.replace(/\/+$/, '');
 
-                const channelsList = document.getElementById('channels-list');
-                
-                if (data.channels && data.channels.length > 0) {
-                    channelsList.innerHTML = data.channels.map(channel => `
-                        <div class="channel-item">
-                            <div class="channel-info">
-                                <div class="channel-username">@${escapeHtml(channel.username)}</div>
-                                <div class="channel-date">Добавлен: ${formatDate(channel.added_at)}</div>
-                            </div>
-                            <button class="delete-btn" onclick="deleteChannel(${channel.id})">Удалить</button>
-                        </div>
-                    `).join('');
-                } else {
-                    channelsList.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-state-icon">📢</div>
-                            <div>Нет добавленных каналов</div>
-                        </div>
-                    `;
-                }
-            } catch (error) {
-                console.error('Ошибка загрузки каналов:', error);
-                showError('Ошибка загрузки каналов');
-            }
-        }
+        if (!value) return null;
 
-        // Извлечение username из ссылки или текста
-        function extractUsername(input) {
-    if (!input) return null;
-    return input.trim(); // просто возвращаем как есть (может быть и ссылка)
-}
+        return `@${value}`;
+    }
 
-
-        // Добавление канала
-        async function addChannel() {
-            const input = document.getElementById('channel-username');
-            const rawInput = input.value.trim();
-
-            if (!rawInput) {
-                showError('Введите username или ссылку на канал');
-                return;
-            }
-
-            // Извлекаем username из любого формата
-            const username = extractUsername(rawInput);
-            
-            if (!username) {
-                showError('Неверный формат. Используйте: @username, username или https://t.me/username');
-                return;
-            }
-
-            try {
-                const response = await fetch(`${API_BASE}/api/channels`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ username })
-                });
-
-                if (response.ok) {
-                    showSuccess(`Канал @${username} успешно добавлен`);
-                    input.value = '';
-                    loadChannels();
-                } else {
-                    const data = await response.json();
-                    showError(data.error || 'Ошибка добавления канала');
-                }
-            } catch (error) {
-                console.error('Ошибка добавления канала:', error);
-                showError('Ошибка добавления канала');
-            }
-        }
-
-        // Удаление канала
-        async function deleteChannel(channelId) {
-            if (!confirm('Удалить этот канал?')) {
-                return;
-            }
-
-            try {
-                const response = await fetch(`${API_BASE}/api/channels/${channelId}`, {
-                    method: 'DELETE'
-                });
-
-                if (response.ok) {
-                    showSuccess('Канал удален');
-                    loadChannels();
-                } else {
-                    showError('Ошибка удаления канала');
-                }
-            } catch (error) {
-                console.error('Ошибка удаления канала:', error);
-                showError('Ошибка удаления канала');
-            }
-        }
-
-        // Утилиты
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        function formatDate(dateStr) {
-            const date = new Date(dateStr);
-            const now = new Date();
-            const diff = now - date;
-            
-            const minutes = Math.floor(diff / 60000);
-            const hours = Math.floor(diff / 3600000);
-            const days = Math.floor(diff / 86400000);
-
-            if (minutes < 1) return 'только что';
-            if (minutes < 60) return `${minutes} мин назад`;
-            if (hours < 24) return `${hours} ч назад`;
-            if (days < 7) return `${days} дн назад`;
-            
-            return date.toLocaleDateString('ru-RU');
-        }
-
-        function showError(message) {
-            const errorDiv = document.getElementById('error-message');
-            errorDiv.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
-            setTimeout(() => {
-                errorDiv.innerHTML = '';
-            }, 3000);
-        }
-
-        function showSuccess(message) {
-            const successDiv = document.getElementById('success-message');
-            successDiv.innerHTML = `<div class="success">${escapeHtml(message)}</div>`;
-            setTimeout(() => {
-                successDiv.innerHTML = '';
-            }, 3000);
-        }
-
-        // Начальная загрузка
-        loadJobs();
-    </script>
+    // Initial load
+    loadJobs();
+</script>
 </body>
 </html>
