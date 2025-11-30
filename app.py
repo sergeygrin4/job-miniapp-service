@@ -26,19 +26,18 @@ AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
 # URL для кнопки "Открыть приложение" в уведомлении
 MINIAPP_URL = os.getenv("MINIAPP_URL") or ""
 
-# Разрешённые username (через запятую): opsifd,another_user
+# Разрешённые админы (по username, через запятую): opsifd,another_user
 ALLOWED_USERNAMES_ENV = os.getenv("ALLOWED_USERNAMES", "").strip()
 
-ALLOWED_USERNAMES = set()
+ADMINS = set()
 if ALLOWED_USERNAMES_ENV:
     for part in ALLOWED_USERNAMES_ENV.split(","):
         uname = part.strip()
         if not uname:
             continue
-        # нормализуем: без @, в нижнем регистре
         uname_norm = uname.lstrip("@").lower()
         if uname_norm:
-            ALLOWED_USERNAMES.add(uname_norm)
+            ADMINS.add(uname_norm)
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 CORS(app)
@@ -57,20 +56,57 @@ def _iso(dt):
     return str(dt)
 
 
-def is_user_allowed(username_norm: str | None) -> bool:
-    """
-    Доступ в миниапп по username.
-    Если ALLOWED_USERNAMES пустой — доступ всем.
-    Если не пустой — только username из списка.
+def _username_norm(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    return v.lstrip("@").lower() or None
 
-    username_norm — уже нормализованный (без @, lower).
-    """
-    if not ALLOWED_USERNAMES:
-        # если список не задан — не ограничиваем
-        return True
+
+def is_admin(username_norm: str | None) -> bool:
     if not username_norm:
         return False
-    return username_norm in ALLOWED_USERNAMES
+    return username_norm in ADMINS
+
+
+def is_user_in_db(username_norm: str | None) -> bool:
+    if not username_norm:
+        return False
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM allowed_users WHERE username = %s LIMIT 1",
+            (username_norm,),
+        )
+        row = cur.fetchone()
+        conn.close()
+        return row is not None
+    except Exception as e:
+        logger.error("Ошибка проверки allowed_users (%s): %s", username_norm, e)
+        return False
+
+
+def is_user_allowed(username_norm: str | None) -> bool:
+    """
+    Доступ в миниапп:
+    - если ADMINS пустой — доступ всем (режим без ограничений)
+    - если username в ADMINS — админ, доступ есть
+    - если username есть в allowed_users — доступ есть
+    - иначе — доступа нет
+    """
+    if not ADMINS:
+        return True
+
+    if not username_norm:
+        return False
+
+    if username_norm in ADMINS:
+        return True
+
+    return is_user_in_db(username_norm)
 
 
 def is_relevant_job(text: str | None) -> bool:
@@ -127,7 +163,7 @@ def load_allowed_user_ids_from_db() -> list[int]:
     """
     Читаем user_id из таблицы allowed_users.
     Это те пользователи, которые:
-    1) есть в ALLOWED_USERNAMES (по username)
+    1) выданы через админку (allowed_users)
     2) хотя бы раз открыли миниапп (мы сохранили их user_id)
     """
     try:
@@ -252,7 +288,7 @@ def notify_users_about_job(
 def upsert_allowed_user(username_norm: str, user_id: int | None):
     """
     Сохраняем/обновляем пользователя в таблице allowed_users,
-    когда он открывает миниапп.
+    когда он открывает миниапп или когда уже есть строка (из админки).
     """
     if not username_norm:
         return
@@ -293,11 +329,9 @@ def check_access():
     user_id_raw = data.get("user_id")
     username_raw = data.get("username")  # может быть None
 
-    username_norm = None
-    if isinstance(username_raw, str):
-        username_norm = username_raw.strip().lstrip("@").lower() or None
-
+    username_norm = _username_norm(username_raw)
     allowed = is_user_allowed(username_norm)
+    admin_flag = is_admin(username_norm)
 
     # Если юзер допущен и у нас есть и username, и user_id — сохраняем связь в БД
     if allowed and username_norm:
@@ -313,6 +347,7 @@ def check_access():
     return jsonify(
         {
             "allowed": allowed,
+            "is_admin": admin_flag,
             "username": username_raw,
             "normalized_username": username_norm,
             "user_id": user_id_raw,
@@ -395,7 +430,7 @@ def list_groups_legacy():
                 "group_id": row["group_id"],
                 "group_name": row.get("group_name") or row["group_id"],
                 "enabled": row.get("enabled", True),
-                "added_at": _iso(row.get("added_at")),
+                "added_at": _iso(row["added_at"]),
             }
         )
     return jsonify({"groups": groups})
@@ -458,6 +493,110 @@ def delete_channel(channel_id: int):
         conn.rollback()
         conn.close()
         logger.error("Ошибка удаления канала: %s", e)
+        return jsonify({"error": "db_error"}), 500
+    conn.close()
+    if deleted == 0:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "deleted"})
+
+
+# ---------------- Admin: allowed_users ----------------
+
+@app.route("/api/allowed_users", methods=["GET"])
+def list_allowed_users():
+    """
+    Список пользователей, которым выдан доступ через админку.
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, username, user_id, updated_at
+            FROM allowed_users
+            ORDER BY username ASC
+            """
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logger.error("Ошибка загрузки allowed_users: %s", e)
+        return jsonify({"users": []})
+
+    users = []
+    for row in rows:
+        users.append(
+            {
+                "id": row["id"],
+                "username": row["username"],
+                "user_id": row.get("user_id"),
+                "updated_at": _iso(row.get("updated_at")),
+            }
+        )
+    return jsonify({"users": users})
+
+
+@app.route("/api/allowed_users", methods=["POST"])
+def add_allowed_user():
+    """
+    Добавление/обновление пользователя с доступом по username.
+    user_id заполнится, когда он зайдёт в миниапп (через check_access).
+    """
+    data = request.get_json(silent=True) or {}
+    username_raw = (data.get("username") or "").strip()
+    username_norm = _username_norm(username_raw)
+
+    if not username_norm:
+        return jsonify({"error": "username is required"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO allowed_users (username, user_id, updated_at)
+            VALUES (%s, NULL, NOW())
+            ON CONFLICT (username) DO UPDATE SET
+                updated_at = EXCLUDED.updated_at
+            RETURNING id, username, user_id, updated_at
+            """,
+            (username_norm,),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error("Ошибка добавления allowed_user: %s", e)
+        return jsonify({"error": "db_error"}), 500
+
+    conn.close()
+    return jsonify(
+        {
+            "id": row["id"],
+            "username": row["username"],
+            "user_id": row.get("user_id"),
+            "updated_at": _iso(row.get("updated_at")),
+        }
+    )
+
+
+@app.route("/api/allowed_users/<int:allowed_id>", methods=["DELETE"])
+def delete_allowed_user(allowed_id: int):
+    """
+    Удаление пользователя из allowed_users.
+    (админов из ENV это не касается)
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM allowed_users WHERE id = %s", (allowed_id,))
+        deleted = cur.rowcount
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error("Ошибка удаления allowed_user: %s", e)
         return jsonify({"error": "db_error"}), 500
     conn.close()
     if deleted == 0:
