@@ -73,5 +73,17 @@ def init_db():
         """
     )
 
+    # Таблица разрешённых пользователей (по username)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS allowed_users (
+            id SERIAL PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            user_id BIGINT,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+
     conn.commit()
     conn.close()
