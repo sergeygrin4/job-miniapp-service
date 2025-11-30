@@ -118,11 +118,11 @@
 
         .job-link {
             font-size: 13px;
-            text-decoration: none;
         }
 
         .job-link a {
             color: var(--tg-theme-link-color, #2481cc);
+            text-decoration: none;
         }
 
         .job-actions {
@@ -289,10 +289,15 @@
             background: rgba(76, 175, 80, 0.15);
             color: #2e7d32;
         }
+
+        .access-denied {
+            padding: 24px 0;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
-<div class="container">
+<div class="container" id="app-container">
     <h1>Поиск вакансий</h1>
     <div class="subtitle">Сбор вакансий из Telegram-каналов</div>
 
@@ -342,15 +347,59 @@
 </div>
 
 <script>
-    // Telegram WebApp init
     let tg = window.Telegram.WebApp;
     tg.expand();
     tg.ready();
 
     const API_BASE = window.location.origin;
     let currentTab = 'jobs';
+    let currentUserId = null;
+    let accessGranted = false;
+
+    // --- Инициализация и проверка доступа ---
+
+    async function initApp() {
+        try {
+            const unsafe = tg.initDataUnsafe || {};
+            if (unsafe.user && unsafe.user.id) {
+                currentUserId = unsafe.user.id;
+            }
+
+            const resp = await fetch(`${API_BASE}/api/check_access`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ user_id: currentUserId })
+            });
+
+            const data = await resp.json();
+
+            if (!data.allowed) {
+                const container = document.getElementById('app-container');
+                container.innerHTML = `
+                    <div class="access-denied">
+                        <h2>Нет доступа</h2>
+                        <p>Этот миниприложение доступно только для ограниченного круга пользователей.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            accessGranted = true;
+            loadJobs();
+        } catch (e) {
+            console.error('Ошибка проверки доступа:', e);
+            // Если сервер не ответил — по дефолту даём доступ, чтобы не ломать UX
+            accessGranted = true;
+            loadJobs();
+        }
+    }
+
+    // --- Переключение вкладок ---
 
     function switchTab(tab) {
+        if (!accessGranted) return;
         currentTab = tab;
 
         document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
@@ -368,8 +417,10 @@
         }
     }
 
-    // Jobs
+    // --- Jobs ---
+
     async function loadJobs() {
+        if (!accessGranted) return;
         try {
             const response = await fetch(`${API_BASE}/api/jobs?limit=50`);
             const data = await response.json();
@@ -395,6 +446,11 @@
                         <div class="job-text">${escapeHtml(job.text || '')}</div>
                         ${job.link ? `<div class="job-link"><a href="${job.link}" target="_blank">Открыть в Telegram →</a></div>` : ''}
                         <div class="job-actions">
+                            ${job.sender_username ? `
+                                <button class="secondary-btn" data-username="${escapeAttribute(job.sender_username)}" onclick="handleAuthorClick(event)">
+                                    Написать автору
+                                </button>
+                            ` : ''}
                             <button class="secondary-btn" onclick="archiveJob(${job.id})">В архив</button>
                             <button class="delete-btn" onclick="deleteJob(${job.id})">Удалить</button>
                         </div>
@@ -414,8 +470,10 @@
         }
     }
 
-    // Archive
+    // --- Archive ---
+
     async function loadArchive() {
+        if (!accessGranted) return;
         try {
             const response = await fetch(`${API_BASE}/api/jobs/archive?limit=50`);
             const data = await response.json();
@@ -432,6 +490,11 @@
                         <div class="job-text">${escapeHtml(job.text || '')}</div>
                         ${job.link ? `<div class="job-link"><a href="${job.link}" target="_blank">Открыть в Telegram →</a></div>` : ''}
                         <div class="job-actions">
+                            ${job.sender_username ? `
+                                <button class="secondary-btn" data-username="${escapeAttribute(job.sender_username)}" onclick="handleAuthorClick(event)">
+                                    Написать автору
+                                </button>
+                            ` : ''}
                             <button class="secondary-btn" onclick="restoreJob(${job.id})">Вернуть</button>
                             <button class="delete-btn" onclick="deleteJob(${job.id})">Удалить</button>
                         </div>
@@ -451,8 +514,10 @@
         }
     }
 
-    // Channels
+    // --- Channels ---
+
     async function loadChannels() {
+        if (!accessGranted) return;
         try {
             const response = await fetch(`${API_BASE}/api/channels`);
             const data = await response.json();
@@ -487,6 +552,7 @@
     }
 
     async function addChannel() {
+        if (!accessGranted) return;
         const input = document.getElementById('channel-username');
         const rawInput = input.value.trim();
 
@@ -528,6 +594,7 @@
     }
 
     async function deleteChannel(channelId) {
+        if (!accessGranted) return;
         if (!confirm('Удалить канал? Парсер перестанет его читать.')) {
             return;
         }
@@ -552,8 +619,10 @@
         }
     }
 
-    // Job actions
+    // --- Job actions (архив / восстановление / удаление / написать автору) ---
+
     async function archiveJob(jobId) {
+        if (!accessGranted) return;
         try {
             const response = await fetch(`${API_BASE}/api/jobs/${jobId}/archive`, {
                 method: 'POST'
@@ -574,6 +643,7 @@
     }
 
     async function restoreJob(jobId) {
+        if (!accessGranted) return;
         try {
             const response = await fetch(`${API_BASE}/api/jobs/${jobId}/restore`, {
                 method: 'POST'
@@ -594,6 +664,7 @@
     }
 
     async function deleteJob(jobId) {
+        if (!accessGranted) return;
         if (!confirm('Удалить вакансию навсегда?')) {
             return;
         }
@@ -621,12 +692,39 @@
         }
     }
 
-    // Utils
+    function handleAuthorClick(event) {
+        const btn = event.currentTarget;
+        const username = btn.getAttribute('data-username') || '';
+        writeToAuthor(username);
+    }
+
+    function writeToAuthor(username) {
+        if (!username) return;
+        let clean = username.trim();
+        if (clean.startsWith('@')) {
+            clean = clean.slice(1);
+        }
+        if (!clean) return;
+        const url = `https://t.me/${encodeURIComponent(clean)}`;
+        window.open(url, '_blank');
+    }
+
+    // --- Utils ---
+
     function escapeHtml(text) {
         if (text === null || text === undefined) return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function escapeAttribute(text) {
+        // Минимальная экранизация для использования в data-атрибуте
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     }
 
     function formatDate(dateStr) {
@@ -685,8 +783,8 @@
         return `@${value}`;
     }
 
-    // Initial load
-    loadJobs();
+    // Старт
+    initApp();
 </script>
 </body>
 </html>
