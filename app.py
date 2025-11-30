@@ -18,23 +18,24 @@ PORT = int(os.getenv("PORT", "8080"))
 API_SECRET = os.getenv("API_SECRET") or ""
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or ""
-ALLOWED_USER_IDS_ENV = os.getenv("ALLOWED_USER_IDS", "").strip()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
 AI_FILTER_ENABLED = os.getenv("AI_FILTER_ENABLED", "false").lower() in ("1", "true", "yes")
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
 
-# Разбираем ALLOWED_USER_IDS в множество int
-ALLOWED_USER_IDS = set()
-if ALLOWED_USER_IDS_ENV:
-    for part in ALLOWED_USER_IDS_ENV.split(","):
-        part = part.strip()
-        if not part:
+# Разрешённые username (через запятую): opsifd,another_user
+ALLOWED_USERNAMES_ENV = os.getenv("ALLOWED_USERNAMES", "").strip()
+
+ALLOWED_USERNAMES = set()
+if ALLOWED_USERNAMES_ENV:
+    for part in ALLOWED_USERNAMES_ENV.split(","):
+        uname = part.strip()
+        if not uname:
             continue
-        try:
-            ALLOWED_USER_IDS.add(int(part))
-        except ValueError:
-            logger.warning("Некорректный user_id в ALLOWED_USER_IDS: %s", part)
+        # нормализуем: без @, в нижнем регистре
+        uname_norm = uname.lstrip("@").lower()
+        if uname_norm:
+            ALLOWED_USERNAMES.add(uname_norm)
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 CORS(app)
@@ -53,20 +54,20 @@ def _iso(dt):
     return str(dt)
 
 
-def is_user_allowed(user_id: int | None) -> bool:
+def is_user_allowed(username_norm: str | None) -> bool:
     """
-    Если ALLOWED_USER_IDS пустой — пускаем всех.
-    Если не пустой — только указанные ID.
+    Доступ в миниапп по username.
+    Если ALLOWED_USERNAMES пустой — доступ всем.
+    Если не пустой — только username из списка.
+
+    username_norm — уже нормализованный (без @, lower).
     """
-    if not ALLOWED_USER_IDS:
+    if not ALLOWED_USERNAMES:
+        # если список не задан — не ограничиваем
         return True
-    if user_id is None:
+    if not username_norm:
         return False
-    try:
-        user_id_int = int(user_id)
-    except (TypeError, ValueError):
-        return False
-    return user_id_int in ALLOWED_USER_IDS
+    return username_norm in ALLOWED_USERNAMES
 
 
 def is_relevant_job(text: str | None) -> bool:
@@ -119,14 +120,53 @@ def is_relevant_job(text: str | None) -> bool:
         return True
 
 
+def load_allowed_user_ids_from_db() -> list[int]:
+    """
+    Читаем user_id из таблицы allowed_users.
+    Это те пользователи, которые:
+    1) есть в ALLOWED_USERNAMES (по username)
+    2) хотя бы раз открыли миниапп (мы сохранили их user_id)
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT DISTINCT user_id
+            FROM allowed_users
+            WHERE user_id IS NOT NULL
+            """
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logger.error("Не удалось загрузить allowed_users из БД: %s", e)
+        return []
+
+    ids: list[int] = []
+    for row in rows:
+        uid = row.get("user_id")
+        if uid is None:
+            continue
+        try:
+            ids.append(int(uid))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
 def notify_users_about_job(chat_title: str | None, text: str | None, link: str | None):
     """
-    Отправляем уведомления в Telegram всем user_id из ALLOWED_USER_IDS.
-    Работает только если TELEGRAM_BOT_TOKEN и ALLOWED_USER_IDS заданы.
+    Отправляем уведомления в Telegram всем user_id из allowed_users.
+    Работает только если TELEGRAM_BOT_TOKEN задан.
     """
     if not TELEGRAM_BOT_TOKEN:
+        logger.info("TELEGRAM_BOT_TOKEN не задан — уведомления отключены")
         return
-    if not ALLOWED_USER_IDS:
+
+    user_ids = load_allowed_user_ids_from_db()
+    if not user_ids:
+        logger.info("Нет ни одного user_id в allowed_users — уведомлять некого")
         return
 
     if not text:
@@ -141,7 +181,7 @@ def notify_users_about_job(chat_title: str | None, text: str | None, link: str |
     if link:
         msg += f"\n\nСсылка: {link}"
 
-    for user_id in ALLOWED_USER_IDS:
+    for user_id in user_ids:
         try:
             resp = requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
@@ -163,21 +203,75 @@ def notify_users_about_job(chat_title: str | None, text: str | None, link: str |
             logger.error("Ошибка отправки уведомления пользователю %s: %s", user_id, e)
 
 
+def upsert_allowed_user(username_norm: str, user_id: int | None):
+    """
+    Сохраняем/обновляем пользователя в таблице allowed_users,
+    когда он открывает миниапп.
+    """
+    if not username_norm:
+        return
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO allowed_users (username, user_id, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (username) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (username_norm, user_id),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error("Ошибка upsert allowed_user (%s, %s): %s", username_norm, user_id, e)
+    finally:
+        conn.close()
+
+
 # ---------------- Проверка доступа к миниаппу ----------------
 
 @app.route("/api/check_access", methods=["POST"])
 def check_access():
     """
-    Принимает user_id из Telegram WebApp и говорит, можно ли пускать пользователя.
+    Принимает user_id и username из Telegram WebApp и говорит, можно ли пускать пользователя.
     {
-        "user_id": 123456789
+        "user_id": 123456789,
+        "username": "opsifd"
     }
     """
     data = request.get_json(silent=True) or {}
-    user_id = data.get("user_id")
+    user_id_raw = data.get("user_id")
+    username_raw = data.get("username")  # может быть None
 
-    allowed = is_user_allowed(user_id)
-    return jsonify({"allowed": allowed, "user_id": user_id})
+    username_norm = None
+    if isinstance(username_raw, str):
+        username_norm = username_raw.strip().lstrip("@").lower() or None
+
+    allowed = is_user_allowed(username_norm)
+
+    # Если юзер допущен и у нас есть и username, и user_id — сохраняем связь в БД
+    if allowed and username_norm:
+        user_id_int = None
+        try:
+            if user_id_raw is not None:
+                user_id_int = int(user_id_raw)
+        except (TypeError, ValueError):
+            user_id_int = None
+
+        upsert_allowed_user(username_norm, user_id_int)
+
+    return jsonify(
+        {
+            "allowed": allowed,
+            "username": username_raw,
+            "normalized_username": username_norm,
+            "user_id": user_id_raw,
+        }
+    )
 
 
 # ---------------- TG-каналы (fb_groups) ----------------
@@ -343,7 +437,6 @@ def list_jobs():
         conn = get_conn()
         cur = conn.cursor()
 
-        # Список вакансий
         cur.execute(
             """
             SELECT id, source, source_name, url, text, sender_username, created_at, received_at
@@ -356,7 +449,6 @@ def list_jobs():
         )
         rows = cur.fetchall()
 
-        # Статистика
         cur.execute("SELECT COUNT(*) AS cnt FROM jobs WHERE archived = FALSE")
         total_row = cur.fetchone() or {"cnt": 0}
         cur.execute(
@@ -427,7 +519,6 @@ def list_archived_jobs():
         except Exception as cleanup_err:
             logger.error("Ошибка автоочистки архива: %s", cleanup_err)
 
-        # Список архивных
         cur.execute(
             """
             SELECT id, source, source_name, url, text, sender_username,
@@ -582,7 +673,6 @@ def receive_post():
     if not source or not external_id or not text:
         return jsonify({"error": "source, external_id, text are required"}), 400
 
-    # AI-фильтр: если нерелевантно — просто не сохраняем
     if not is_relevant_job(text):
         logger.info("Пост %s/%s отфильтрован как нерелевантный", source, external_id)
         return jsonify({"status": "filtered_out"})
@@ -625,7 +715,6 @@ def receive_post():
         logger.error("Ошибка сохранения вакансии: %s", e)
         return jsonify({"error": "db_error"}), 500
 
-    # Нотификации авторизованным юзерам
     notify_users_about_job(saved_source_name or saved_source, saved_text, saved_url)
 
     return jsonify({"status": "ok", "id": job_id})
