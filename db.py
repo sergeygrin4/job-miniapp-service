@@ -2,11 +2,10 @@ import os
 import psycopg2
 import psycopg2.extras
 
-# Railway / DATABASE_URL
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set")
+
 
 def get_conn():
     """Подключение к Postgres с RealDictCursor (строки как dict)."""
@@ -15,12 +14,13 @@ def get_conn():
         cursor_factory=psycopg2.extras.RealDictCursor,
     )
 
+
 def init_db():
     """Создание таблиц и добавление недостающих колонок."""
     conn = get_conn()
     cur = conn.cursor()
 
-    # Источники (каналы/группы Telegram) — таблица уже была, но пусть создастся, если её нет
+    # Таблица источников (каналы/группы Telegram)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS fb_groups (
@@ -33,7 +33,7 @@ def init_db():
         """
     )
 
-    # Вакансии
+    # Таблица вакансий
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS jobs (
@@ -43,6 +43,7 @@ def init_db():
             external_id TEXT NOT NULL,
             url TEXT,
             text TEXT,
+            sender_username TEXT,
             created_at TIMESTAMPTZ,
             received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             archived BOOLEAN NOT NULL DEFAULT FALSE,
@@ -52,7 +53,13 @@ def init_db():
         """
     )
 
-    # На случай, если jobs уже существовала без новых колонок
+    # На случай, если таблица уже существовала без новых колонок
+    cur.execute(
+        """
+        ALTER TABLE jobs
+        ADD COLUMN IF NOT EXISTS sender_username TEXT;
+        """
+    )
     cur.execute(
         """
         ALTER TABLE jobs
