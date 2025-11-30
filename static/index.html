@@ -354,6 +354,7 @@
     const API_BASE = window.location.origin;
     let currentTab = 'jobs';
     let currentUserId = null;
+    let currentUsername = null;
     let accessGranted = false;
 
     // --- Инициализация и проверка доступа ---
@@ -361,8 +362,13 @@
     async function initApp() {
         try {
             const unsafe = tg.initDataUnsafe || {};
-            if (unsafe.user && unsafe.user.id) {
-                currentUserId = unsafe.user.id;
+            if (unsafe.user) {
+                if (unsafe.user.id) {
+                    currentUserId = unsafe.user.id;
+                }
+                if (unsafe.user.username) {
+                    currentUsername = unsafe.user.username;
+                }
             }
 
             const resp = await fetch(`${API_BASE}/api/check_access`, {
@@ -370,7 +376,10 @@
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ user_id: currentUserId })
+                body: JSON.stringify({
+                    user_id: currentUserId,
+                    username: currentUsername
+                })
             });
 
             const data = await resp.json();
@@ -380,7 +389,7 @@
                 container.innerHTML = `
                     <div class="access-denied">
                         <h2>Нет доступа</h2>
-                        <p>Этот миниприложение доступно только для ограниченного круга пользователей.</p>
+                        <p>Это мини-приложение доступно только для избранных @username.</p>
                     </div>
                 `;
                 return;
@@ -619,7 +628,7 @@
         }
     }
 
-    // --- Job actions (архив / восстановление / удаление / написать автору) ---
+    // --- Job actions ---
 
     async function archiveJob(jobId) {
         if (!accessGranted) return;
@@ -719,7 +728,6 @@
     }
 
     function escapeAttribute(text) {
-        // Минимальная экранизация для использования в data-атрибуте
         return String(text)
             .replace(/&/g, '&amp;')
             .replace(/"/g, '&quot;')
