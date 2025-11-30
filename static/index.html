@@ -217,7 +217,8 @@
             opacity: 0.8;
         }
 
-        .channel-item {
+        .channel-item,
+        .user-item {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -226,34 +227,40 @@
             border-bottom: 1px solid rgba(0, 0, 0, 0.04);
         }
 
-        .channel-info {
+        .channel-info,
+        .user-info {
             flex: 1;
             min-width: 0;
         }
 
-        .channel-username {
+        .channel-username,
+        .user-username {
             font-size: 14px;
             font-weight: 500;
             word-wrap: break-word;
             overflow-wrap: anywhere;
         }
 
-        .channel-date {
+        .channel-date,
+        .user-meta {
             font-size: 12px;
             opacity: 0.7;
         }
 
-        .channel-item .delete-btn {
+        .channel-item .delete-btn,
+        .user-item .delete-btn {
             flex-shrink: 0;
         }
 
         @media (max-width: 480px) {
-            .channel-item {
+            .channel-item,
+            .user-item {
                 flex-direction: column;
                 align-items: flex-start;
             }
 
-            .channel-item .delete-btn {
+            .channel-item .delete-btn,
+            .user-item .delete-btn {
                 align-self: stretch;
                 text-align: center;
             }
@@ -294,6 +301,12 @@
             padding: 24px 0;
             text-align: center;
         }
+
+        .settings-hint {
+            font-size: 13px;
+            opacity: 0.75;
+            margin-bottom: 12px;
+        }
     </style>
 </head>
 <body>
@@ -305,6 +318,7 @@
         <button class="tab active" onclick="switchTab('jobs')">Вакансии</button>
         <button class="tab" onclick="switchTab('channels')">TG-каналы</button>
         <button class="tab" onclick="switchTab('archive')">Архив</button>
+        <button class="tab" id="settings-tab-btn" onclick="switchTab('settings')">Настройки</button>
     </div>
 
     <div id="error-message"></div>
@@ -344,6 +358,31 @@
             <div class="loading">Загрузка архива...</div>
         </div>
     </div>
+
+    <div id="settings-tab" class="tab-content">
+        <div class="add-channel-form">
+            <div class="settings-hint">
+                Управление доступами. Добавь @username — пользователь сможет заходить в мини-приложение и получать вакансии.
+            </div>
+            <div class="input-group">
+                <label for="user-username">Username пользователя</label>
+                <input
+                    type="text"
+                    id="user-username"
+                    placeholder="@opsifd, opsifd"
+                >
+            </div>
+            <button class="btn" onclick="addAllowedUser()">Выдать доступ</button>
+        </div>
+
+        <div class="channels-header">
+            <div class="channels-count" id="users-count"></div>
+        </div>
+
+        <div id="users-list">
+            <div class="loading">Загрузка пользователей...</div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -356,6 +395,7 @@
     let currentUserId = null;
     let currentUsername = null;
     let accessGranted = false;
+    let isAdmin = false;
 
     // --- Инициализация и проверка доступа ---
 
@@ -389,17 +429,25 @@
                 container.innerHTML = `
                     <div class="access-denied">
                         <h2>Нет доступа</h2>
-                        <p>Это мини-приложение доступно только для избранных @username.</p>
+                        <p>Это мини-приложение доступно только для определённых пользователей.</p>
                     </div>
                 `;
                 return;
             }
 
             accessGranted = true;
+            isAdmin = !!data.is_admin;
+
+            const settingsTabBtn = document.getElementById('settings-tab-btn');
+            const settingsTabDiv = document.getElementById('settings-tab');
+            if (!isAdmin && settingsTabBtn && settingsTabDiv) {
+                settingsTabBtn.style.display = 'none';
+                settingsTabDiv.style.display = 'none';
+            }
+
             loadJobs();
         } catch (e) {
             console.error('Ошибка проверки доступа:', e);
-            // Если сервер не ответил — по дефолту даём доступ, чтобы не ломать UX
             accessGranted = true;
             loadJobs();
         }
@@ -409,13 +457,21 @@
 
     function switchTab(tab) {
         if (!accessGranted) return;
+        if (tab === 'settings' && !isAdmin) return;
+
         currentTab = tab;
 
         document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
 
-        document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
-        document.getElementById(`${tab}-tab`).classList.add('active');
+        const tabBtn = document.querySelector(`.tab[onclick="switchTab('${tab}')"]`);
+        if (tabBtn) {
+            tabBtn.classList.add('active');
+        }
+        const tabDiv = document.getElementById(`${tab}-tab`);
+        if (tabDiv) {
+            tabDiv.classList.add('active');
+        }
 
         if (tab === 'jobs') {
             loadJobs();
@@ -423,6 +479,8 @@
             loadChannels();
         } else if (tab === 'archive') {
             loadArchive();
+        } else if (tab === 'settings') {
+            loadAllowedUsers();
         }
     }
 
@@ -625,6 +683,125 @@
         } catch (error) {
             console.error('Ошибка удаления канала:', error);
             showError('Ошибка удаления канала');
+        }
+    }
+
+    // --- Admin: allowed users ---
+
+    async function loadAllowedUsers() {
+        if (!accessGranted || !isAdmin) return;
+
+        try {
+            const response = await fetch(`${API_BASE}/api/allowed_users`);
+            const data = await response.json();
+
+            const usersList = document.getElementById('users-list');
+            const usersCount = document.getElementById('users-count');
+
+            if (data.users && data.users.length > 0) {
+                usersCount.textContent = `Всего пользователей с доступом: ${data.users.length}`;
+                usersList.innerHTML = data.users.map(user => {
+                    const usernameDisplay = user.username ? `@${escapeHtml(user.username)}` : '(без username)';
+                    const userIdDisplay = user.user_id ? `ID: ${user.user_id}` : 'ID ещё не получен';
+                    const updatedDisplay = user.updated_at ? `Обновлён: ${formatDate(user.updated_at)}` : '';
+                    return `
+                        <div class="user-item">
+                            <div class="user-info">
+                                <div class="user-username">${usernameDisplay}</div>
+                                <div class="user-meta">${userIdDisplay}${updatedDisplay ? ' • ' + updatedDisplay : ''}</div>
+                            </div>
+                            <button class="delete-btn" onclick="deleteAllowedUser(${user.id})">Удалить</button>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                usersCount.textContent = 'Пока нет выданных доступов';
+                usersList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">👥</div>
+                        <div>Список пользователей с доступом пуст</div>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки пользователей с доступом:', error);
+            showError('Ошибка загрузки пользователей с доступом');
+        }
+    }
+
+    async function addAllowedUser() {
+        if (!accessGranted || !isAdmin) return;
+
+        const input = document.getElementById('user-username');
+        let rawInput = input.value.trim();
+        if (!rawInput) {
+            showError('Введите username пользователя');
+            return;
+        }
+
+        if (rawInput.startsWith('https://t.me/') || rawInput.startsWith('http://t.me/')) {
+            rawInput = rawInput.replace(/^https?:\/\/t\.me\//, '');
+        }
+        if (rawInput.startsWith('@')) {
+            rawInput = rawInput.slice(1);
+        }
+        rawInput = rawInput.replace(/\/+$/, '');
+
+        if (!rawInput) {
+            showError('Некорректный username');
+            return;
+        }
+
+        const usernameNorm = rawInput;
+
+        try {
+            const response = await fetch(`${API_BASE}/api/allowed_users`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ username: usernameNorm })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                showError(data.error || 'Ошибка выдачи доступа');
+                return;
+            }
+
+            showSuccess(`Доступ выдан пользователю @${usernameNorm}`);
+            input.value = '';
+            loadAllowedUsers();
+        } catch (error) {
+            console.error('Ошибка выдачи доступа:', error);
+            showError('Ошибка выдачи доступа');
+        }
+    }
+
+    async function deleteAllowedUser(allowedId) {
+        if (!accessGranted || !isAdmin) return;
+        if (!confirm('Удалить доступ у пользователя?')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE}/api/allowed_users/${allowedId}`, {
+                method: 'DELETE'
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                showError(data.error || 'Ошибка удаления доступа');
+                return;
+            }
+
+            showSuccess('Доступ пользователя удалён');
+            loadAllowedUsers();
+        } catch (error) {
+            console.error('Ошибка удаления доступа:', error);
+            showError('Ошибка удаления доступа');
         }
     }
 
