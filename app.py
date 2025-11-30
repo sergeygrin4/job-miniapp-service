@@ -55,8 +55,8 @@ def _iso(dt):
 
 def is_user_allowed(user_id: int | None) -> bool:
     """
-    Если ALLOWED_USER_IDS пустой — доступ всем.
-    Если не пустой — только тем ID, которые там есть.
+    Если ALLOWED_USER_IDS пустой — пускаем всех.
+    Если не пустой — только указанные ID.
     """
     if not ALLOWED_USER_IDS:
         return True
@@ -71,9 +71,10 @@ def is_user_allowed(user_id: int | None) -> bool:
 
 def is_relevant_job(text: str | None) -> bool:
     """
-    AI-фильтр нерелевантных вакансий.
-    Возвращает True, если пост релевантен и его стоит сохранить.
-    Если фильтр выключен/сломался — возвращаем True (fail-open).
+    AI-фильтр релевантности вакансий.
+    True  -> сохранить пост
+    False -> отфильтровать
+    Если что-то пошло не так — возвращаем True (чтобы не терять вакансии).
     """
     if not AI_FILTER_ENABLED:
         return True
@@ -108,19 +109,19 @@ def is_relevant_job(text: str | None) -> bool:
             max_tokens=1,
             temperature=0,
         )
-        answer = resp.choices[0].message.content.strip().upper()
-        relevant = answer.startswith("Y")
+        answer = (resp.choices[0].message.content or "").strip().upper()
+        relevant = answer.startswith("YES") or answer.startswith("Y")
         logger.info("AI-фильтр: %s -> %s", answer, "relevant" if relevant else "irrelevant")
         return relevant
     except Exception as e:
         logger.error("Ошибка AI-фильтра: %s", e)
-        # Если фильтр сломался — лучше не выкидывать пост
+        # Если фильтр упал — не режем пост
         return True
 
 
 def notify_users_about_job(chat_title: str | None, text: str | None, link: str | None):
     """
-    Шлём нотификации в Telegram тем юзерам, чьи ID указаны в ALLOWED_USER_IDS.
+    Отправляем уведомления в Telegram всем user_id из ALLOWED_USER_IDS.
     Работает только если TELEGRAM_BOT_TOKEN и ALLOWED_USER_IDS заданы.
     """
     if not TELEGRAM_BOT_TOKEN:
@@ -186,6 +187,7 @@ def list_channels():
     """
     Отдаём только Telegram-источники из fb_groups:
     group_id ILIKE '%t.me/%' или group_id LIKE '@%'.
+    Используется фронтом (вкладка TG-каналы).
     """
     try:
         conn = get_conn()
@@ -194,8 +196,8 @@ def list_channels():
             """
             SELECT id, group_id, group_name, enabled, added_at
             FROM fb_groups
-            WHERE group_id ILIKE '%%t.me/%%'
-               OR group_id LIKE '@%%'
+            WHERE group_id ILIKE '%t.me/%'
+               OR group_id LIKE '@%'
             ORDER BY id ASC
             """
         )
@@ -217,6 +219,46 @@ def list_channels():
             }
         )
     return jsonify({"channels": channels})
+
+
+# ---------------- Совместимость для старых парсеров (/api/groups) ----------------
+
+@app.route("/api/groups", methods=["GET"])
+def list_groups_legacy():
+    """
+    Старый эндпоинт для парсеров.
+    Возвращает те же данные, что и /api/channels, но в виде {"groups": [...]}.
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, group_id, group_name, enabled, added_at
+            FROM fb_groups
+            WHERE group_id ILIKE '%t.me/%'
+               OR group_id LIKE '@%'
+            ORDER BY id ASC
+            """
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logger.error("Ошибка загрузки групп (legacy /api/groups): %s", e)
+        return jsonify({"groups": []})
+
+    groups = []
+    for row in rows:
+        groups.append(
+            {
+                "id": row["id"],
+                "group_id": row["group_id"],
+                "group_name": row.get("group_name") or row["group_id"],
+                "enabled": row.get("enabled", True),
+                "added_at": _iso(row.get("added_at")),
+            }
+        )
+    return jsonify({"groups": groups})
 
 
 @app.route("/api/channels", methods=["POST"])
