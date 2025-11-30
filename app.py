@@ -23,6 +23,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
 AI_FILTER_ENABLED = os.getenv("AI_FILTER_ENABLED", "false").lower() in ("1", "true", "yes")
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
 
+# URL для кнопки "Открыть приложение" в уведомлении
+MINIAPP_URL = os.getenv("MINIAPP_URL") or ""
+
 # Разрешённые username (через запятую): opsifd,another_user
 ALLOWED_USERNAMES_ENV = os.getenv("ALLOWED_USERNAMES", "").strip()
 
@@ -158,7 +161,7 @@ def load_allowed_user_ids_from_db() -> list[int]:
 def notify_users_about_job(chat_title: str | None, text: str | None, link: str | None):
     """
     Отправляем уведомления в Telegram всем user_id из allowed_users.
-    Работает только если TELEGRAM_BOT_TOKEN задан.
+    Формат: структурированное сообщение + inline-кнопки.
     """
     if not TELEGRAM_BOT_TOKEN:
         logger.info("TELEGRAM_BOT_TOKEN не задан — уведомления отключены")
@@ -169,17 +172,40 @@ def notify_users_about_job(chat_title: str | None, text: str | None, link: str |
         logger.info("Нет ни одного user_id в allowed_users — уведомлять некого")
         return
 
-    if not text:
-        text = ""
-    short_text = text.strip()
-    if len(short_text) > 200:
-        short_text = short_text[:200] + "…"
+    chat_title = chat_title or "Telegram канала"
+    short_text = (text or "").strip()
 
-    title = chat_title or "канала"
+    # Обрезаем текст для превью
+    if len(short_text) > 400:
+        short_text = short_text[:400] + "…"
 
-    msg = f"Новая вакансия из {title}:\n\n{short_text}"
+    # Основной текст уведомления
+    msg = (
+        f"📢 *Получена вакансия из группы:* _{chat_title}_\n\n"
+        f"📝 *Краткое описание:*\n{short_text}\n"
+    )
+
+    # Inline-кнопки
+    inline_keyboard = []
+
     if link:
-        msg += f"\n\nСсылка: {link}"
+        inline_keyboard.append([
+            {"text": "🔗 Открыть пост", "url": link}
+        ])
+
+    if MINIAPP_URL:
+        inline_keyboard.append([
+            {"text": "📱 Открыть приложение", "url": MINIAPP_URL}
+        ])
+
+    base_payload = {
+        "text": msg,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+        "reply_markup": {
+            "inline_keyboard": inline_keyboard
+        }
+    }
 
     for user_id in user_ids:
         try:
@@ -187,8 +213,7 @@ def notify_users_about_job(chat_title: str | None, text: str | None, link: str |
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                 json={
                     "chat_id": user_id,
-                    "text": msg,
-                    "disable_web_page_preview": True,
+                    **base_payload,
                 },
                 timeout=5,
             )
