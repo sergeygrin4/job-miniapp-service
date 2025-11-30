@@ -158,10 +158,18 @@ def load_allowed_user_ids_from_db() -> list[int]:
     return ids
 
 
-def notify_users_about_job(chat_title: str | None, text: str | None, link: str | None):
+def notify_users_about_job(
+    chat_title: str | None,
+    text: str | None,
+    link: str | None,
+    sender_username: str | None = None,
+):
     """
     Отправляем уведомления в Telegram всем user_id из allowed_users.
-    Формат: структурированное сообщение + inline-кнопки.
+    Формат: структурированное сообщение + inline-кнопки:
+    - Открыть пост
+    - Написать автору (если есть sender_username)
+    - Открыть приложение
     """
     if not TELEGRAM_BOT_TOKEN:
         logger.info("TELEGRAM_BOT_TOKEN не задан — уведомления отключены")
@@ -188,11 +196,24 @@ def notify_users_about_job(chat_title: str | None, text: str | None, link: str |
     # Inline-кнопки
     inline_keyboard = []
 
+    # Кнопка "Открыть пост"
     if link:
         inline_keyboard.append([
             {"text": "🔗 Открыть пост", "url": link}
         ])
 
+    # Кнопка "Написать автору"
+    if sender_username:
+        clean = sender_username.strip()
+        if clean.startswith("@"):
+            clean = clean[1:]
+        if clean:
+            author_url = f"https://t.me/{clean}"
+            inline_keyboard.append([
+                {"text": "✉️ Написать автору", "url": author_url}
+            ])
+
+    # Кнопка "Открыть приложение"
     if MINIAPP_URL:
         inline_keyboard.append([
             {"text": "📱 Открыть приложение", "url": MINIAPP_URL}
@@ -717,7 +738,7 @@ def receive_post():
             INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (external_id, source) DO NOTHING
-            RETURNING id, source, source_name, url, text
+            RETURNING id, source, source_name, url, text, sender_username
             """,
             (source, source_name, external_id, url, text, sender_username, created_at),
         )
@@ -732,6 +753,7 @@ def receive_post():
         saved_source_name = row.get("source_name")
         saved_url = row.get("url")
         saved_text = row.get("text") or ""
+        saved_sender_username = row.get("sender_username")
         conn.commit()
         conn.close()
     except Exception as e:
@@ -740,7 +762,12 @@ def receive_post():
         logger.error("Ошибка сохранения вакансии: %s", e)
         return jsonify({"error": "db_error"}), 500
 
-    notify_users_about_job(saved_source_name or saved_source, saved_text, saved_url)
+    notify_users_about_job(
+        saved_source_name or saved_source,
+        saved_text,
+        saved_url,
+        sender_username=saved_sender_username,
+    )
 
     return jsonify({"status": "ok", "id": job_id})
 
