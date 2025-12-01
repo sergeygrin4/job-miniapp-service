@@ -1,89 +1,117 @@
-import os
+# db.py
 import psycopg2
-import psycopg2.extras
+from psycopg2.extras import RealDictCursor
+import os
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set")
-
 
 def get_conn():
-    """Подключение к Postgres с RealDictCursor (строки как dict)."""
-    return psycopg2.connect(
-        DATABASE_URL,
-        cursor_factory=psycopg2.extras.RealDictCursor,
-    )
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 
 def init_db():
-    """Создание таблиц и добавление недостающих колонок."""
     conn = get_conn()
     cur = conn.cursor()
 
-    # Таблица источников (каналы/группы Telegram)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS fb_groups (
-            id SERIAL PRIMARY KEY,
-            group_id TEXT NOT NULL UNIQUE,
-            group_name TEXT,
-            enabled BOOLEAN NOT NULL DEFAULT TRUE,
-            added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-        """
-    )
+    # таблица пользователей (для админки)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        tg_id BIGINT UNIQUE NOT NULL,
+        is_admin BOOLEAN DEFAULT FALSE
+    );
+    """)
 
-    # Таблица вакансий
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS jobs (
-            id SERIAL PRIMARY KEY,
-            source TEXT NOT NULL,
-            source_name TEXT,
-            external_id TEXT NOT NULL,
-            url TEXT,
-            text TEXT,
-            sender_username TEXT,
-            created_at TIMESTAMPTZ,
-            received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            archived BOOLEAN NOT NULL DEFAULT FALSE,
-            archived_at TIMESTAMPTZ,
-            UNIQUE (external_id, source)
-        );
-        """
-    )
+    # Telegram источники
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS tg_groups (
+        id SERIAL PRIMARY KEY,
+        group_link TEXT UNIQUE NOT NULL,
+        enabled BOOLEAN DEFAULT TRUE
+    );
+    """)
 
-    # На случай, если таблица уже существовала без новых колонок
-    cur.execute(
-        """
-        ALTER TABLE jobs
-        ADD COLUMN IF NOT EXISTS sender_username TEXT;
-        """
-    )
-    cur.execute(
-        """
-        ALTER TABLE jobs
-        ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
-        """
-    )
-    cur.execute(
-        """
-        ALTER TABLE jobs
-        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
-        """
-    )
+    # Facebook источники
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS fb_groups (
+        id SERIAL PRIMARY KEY,
+        group_link TEXT UNIQUE NOT NULL,
+        enabled BOOLEAN DEFAULT TRUE
+    );
+    """)
 
-    # Таблица разрешённых пользователей (по username)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS allowed_users (
-            id SERIAL PRIMARY KEY,
-            username TEXT NOT NULL UNIQUE,
-            user_id BIGINT,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-        """
-    )
+    # Лог отправленных вакансий
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS posts_sent (
+        id SERIAL PRIMARY KEY,
+        post_id TEXT UNIQUE NOT NULL,
+        source TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    """)
 
     conn.commit()
     conn.close()
+
+
+def add_tg_group(link):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO tg_groups (group_link)
+        VALUES (%s)
+        ON CONFLICT (group_link) DO NOTHING;
+    """, (link,))
+    conn.commit()
+    conn.close()
+
+
+def add_fb_group(link):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO fb_groups (group_link)
+        VALUES (%s)
+        ON CONFLICT (group_link) DO NOTHING;
+    """, (link,))
+    conn.commit()
+    conn.close()
+
+
+def get_enabled_tg_groups():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT group_link FROM tg_groups WHERE enabled = TRUE;")
+    rows = cur.fetchall()
+    conn.close()
+    return [r["group_link"] for r in rows]
+
+
+def get_enabled_fb_groups():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT group_link FROM fb_groups WHERE enabled = TRUE;")
+    rows = cur.fetchall()
+    conn.close()
+    return [r["group_link"] for r in rows]
+
+
+def add_sent_post(post_id, source):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO posts_sent (post_id, source)
+        VALUES (%s, %s)
+        ON CONFLICT (post_id) DO NOTHING;
+    """, (post_id, source))
+    conn.commit()
+    conn.close()
+
+
+def check_post_sent(post_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM posts_sent WHERE post_id = %s", (post_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
