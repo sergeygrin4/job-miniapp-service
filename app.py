@@ -395,6 +395,140 @@ def list_channels():
         )
     return jsonify({"channels": channels})
 
+# ---------------- FB-группы для FB-парсера ----------------
+
+@app.route("/api/fb_groups", methods=["GET"])
+def list_fb_groups():
+    """
+    Для FB-парсера.
+    Ожидаемый формат ответа:
+
+    {
+      "groups": [
+        {
+          "id": 1,
+          "group_url": "https://www.facebook.com/groups/....",
+          "group_name": "Название группы",
+          "enabled": true,
+          "added_at": "2025-12-01T12:34:56Z"
+        },
+        ...
+      ]
+    }
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, group_id, group_name, enabled, added_at
+            FROM fb_groups
+            WHERE group_id ILIKE '%facebook.com%'
+               OR group_id ILIKE '%fb.com%'
+            ORDER BY id ASC
+            """
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logger.error("Ошибка загрузки FB-групп: %s", e)
+        return jsonify({"groups": []})
+
+    groups = []
+    for row in rows:
+        groups.append(
+            {
+                "id": row["id"],
+                "group_url": row["group_id"],
+                "group_name": row.get("group_name") or row["group_id"],
+                "enabled": row.get("enabled", True),
+                "added_at": _iso(row.get("added_at")),
+            }
+        )
+
+    return jsonify({"groups": groups})
+
+
+@app.route("/api/fb_groups", methods=["POST"])
+def add_fb_group():
+    """
+    Добавление/обновление FB-группы из веб-интерфейса.
+    Тело запроса:
+    {
+      "group_url": "https://www.facebook.com/groups/...",
+      "group_name": "Необязательное название"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    group_url = (data.get("group_url") or "").strip()
+    group_name = (data.get("group_name") or "").strip()
+
+    if not group_url:
+        return jsonify({"error": "group_url is required"}), 400
+
+    # Лёгкая валидация, чтобы не перепутать с TG-каналами
+    if "facebook.com" not in group_url and "fb.com" not in group_url:
+        return jsonify({"error": "looks like not a Facebook group URL"}), 400
+
+    if not group_name:
+        group_name = group_url
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO fb_groups (group_id, group_name, enabled)
+            VALUES (%s, %s, TRUE)
+            ON CONFLICT (group_id) DO UPDATE SET
+                group_name = EXCLUDED.group_name,
+                enabled = TRUE
+            RETURNING id, group_id, group_name, enabled, added_at
+            """,
+            (group_url, group_name),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error("Ошибка добавления FB-группы: %s", e)
+        return jsonify({"error": "db_error"}), 500
+
+    conn.close()
+    return jsonify(
+        {
+            "id": row["id"],
+            "group_url": row["group_id"],
+            "group_name": row["group_name"],
+            "enabled": row["enabled"],
+            "added_at": _iso(row["added_at"]),
+        }
+    )
+
+
+@app.route("/api/fb_groups/<int:group_id>", methods=["DELETE"])
+def delete_fb_group(group_id: int):
+    """
+    Удаление FB-группы.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM fb_groups WHERE id = %s", (group_id,))
+        deleted = cur.rowcount
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        logger.error("Ошибка удаления FB-группы: %s", e)
+        return jsonify({"error": "db_error"}), 500
+
+    conn.close()
+    if deleted == 0:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "deleted"})
+
 
 # ---------------- Совместимость для старых парсеров (/api/groups) ----------------
 
