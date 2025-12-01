@@ -314,12 +314,14 @@
     <h1>Поиск вакансий</h1>
     <div class="subtitle">Сбор вакансий из Telegram-каналов</div>
 
-    <div class="tabs">
-        <button class="tab active" onclick="switchTab('jobs')">Вакансии</button>
-        <button class="tab" onclick="switchTab('channels')">TG-каналы</button>
-        <button class="tab" onclick="switchTab('archive')">Архив</button>
-        <button class="tab" id="settings-tab-btn" onclick="switchTab('settings')">Настройки</button>
-    </div>
+<div class="tabs">
+    <button class="tab active" onclick="switchTab('jobs')">Вакансии</button>
+    <button class="tab" onclick="switchTab('channels')">TG-каналы</button>
+    <button class="tab" onclick="switchTab('fb')">FB-группы</button>
+    <button class="tab" onclick="switchTab('archive')">Архив</button>
+    <button class="tab" id="settings-tab-btn" onclick="switchTab('settings')">Настройки</button>
+</div>
+
 
     <div id="error-message"></div>
     <div id="success-message"></div>
@@ -353,6 +355,33 @@
         </div>
     </div>
 
+<div id="fb-tab" class="tab-content">
+    <div class="add-channel-form">
+        <div class="settings-hint">
+            FB-группы для парсера. Добавь ссылку на группу Facebook — парсер будет
+            ходить по ним через Apify и тянуть релевантные посты.
+        </div>
+        <div class="input-group">
+            <label for="fb-url">Ссылка на FB-группу</label>
+            <input
+                type="text"
+                id="fb-url"
+                placeholder="https://www.facebook.com/groups/1234567890"
+            >
+        </div>
+        <button class="btn" onclick="addFbGroup()">Добавить FB-группу</button>
+    </div>
+
+    <div class="channels-header">
+        <div class="channels-count" id="fb-count"></div>
+    </div>
+
+    <div id="fb-list">
+        <div class="loading">Загрузка FB-групп...</div>
+    </div>
+</div>
+
+    
     <div id="archive-tab" class="tab-content">
         <div id="archive-list">
             <div class="loading">Загрузка архива...</div>
@@ -474,15 +503,18 @@
         }
 
         if (tab === 'jobs') {
-            loadJobs();
-        } else if (tab === 'channels') {
-            loadChannels();
-        } else if (tab === 'archive') {
-            loadArchive();
-        } else if (tab === 'settings') {
-            loadAllowedUsers();
-        }
+        loadJobs();
+    } else if (tab === 'channels') {
+        loadChannels();
+    } else if (tab === 'fb') {
+        loadFbGroups();
+    } else if (tab === 'archive') {
+        loadArchive();
+    } else if (tab === 'settings') {
+        loadAllowedUsers();
     }
+}
+
 
     // --- Jobs ---
 
@@ -683,6 +715,109 @@
         } catch (error) {
             console.error('Ошибка удаления канала:', error);
             showError('Ошибка удаления канала');
+        }
+    }
+    // --- FB Groups ---
+
+    async function loadFbGroups() {
+        if (!accessGranted) return;
+        try {
+            const response = await fetch(`${API_BASE}/api/fb_groups`);
+            const data = await response.json();
+
+            const fbList = document.getElementById('fb-list');
+            const fbCount = document.getElementById('fb-count');
+
+            if (data.groups && data.groups.length > 0) {
+                fbCount.textContent = `Всего FB-групп: ${data.groups.length}`;
+                fbList.innerHTML = data.groups.map(group => `
+                    <div class="channel-item">
+                        <div class="channel-info">
+                            <div class="channel-username">
+                                <a href="${escapeHtml(group.group_url)}" target="_blank">
+                                    ${escapeHtml(group.group_name || group.group_url)}
+                                </a>
+                            </div>
+                            <div class="channel-date">
+                                Добавлена: ${formatDate(group.added_at)}
+                            </div>
+                        </div>
+                        <button class="delete-btn" onclick="deleteFbGroup(${group.id})">Удалить</button>
+                    </div>
+                `).join('');
+            } else {
+                fbCount.textContent = 'FB-группы не добавлены';
+                fbList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📘</div>
+                        <div>Пока не добавлено ни одной FB-группы</div>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки FB-групп:', error);
+            showError('Ошибка загрузки FB-групп');
+        }
+    }
+
+    async function addFbGroup() {
+        if (!accessGranted) return;
+
+        const input = document.getElementById('fb-url');
+        let groupUrl = (input.value || '').trim();
+
+        if (!groupUrl) {
+            showError('Укажи ссылку на FB-группу');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE}/api/fb_groups`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ group_url: groupUrl })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                showError(data.error || 'Ошибка добавления FB-группы');
+                return;
+            }
+
+            showSuccess('FB-группа успешно добавлена');
+            input.value = '';
+            loadFbGroups();
+        } catch (error) {
+            console.error('Ошибка добавления FB-группы:', error);
+            showError('Ошибка добавления FB-группы');
+        }
+    }
+
+    async function deleteFbGroup(groupId) {
+        if (!accessGranted) return;
+
+        if (!confirm('Удалить эту FB-группу?')) return;
+
+        try {
+            const response = await fetch(`${API_BASE}/api/fb_groups/${groupId}`, {
+                method: 'DELETE'
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                showError(data.error || 'Ошибка удаления FB-группы');
+                return;
+            }
+
+            showSuccess('FB-группа удалена');
+            loadFbGroups();
+        } catch (error) {
+            console.error('Ошибка удаления FB-группы:', error);
+            showError('Ошибка удаления FB-группы');
         }
     }
 
