@@ -3,1108 +3,393 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Поиск вакансий</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>Вакансии</title>
+
     <style>
-        * {
+        body {
+            font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
-            box-sizing: border-box;
+            background: #f4f4f4;
         }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background: var(--tg-theme-bg-color, #ffffff);
-            color: var(--tg-theme-text-color, #000000);
-            padding: 12px;
+        header {
+            background: #fff;
+            padding: 10px 0;
+            text-align: center;
+            border-bottom: 1px solid #ddd;
+            position: relative;
         }
 
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
+        #settings-gear {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            font-size: 24px;
+            cursor: pointer;
+            opacity: 0.75;
+            user-select: none;
         }
 
-        h1 {
-            font-size: 22px;
-            margin-bottom: 8px;
+        #settings-gear:hover {
+            opacity: 1;
         }
 
-        .subtitle {
-            font-size: 14px;
-            opacity: 0.8;
-            margin-bottom: 16px;
-        }
-
-        .tabs {
+        nav {
             display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
-            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            padding: 4px;
-            border-radius: 12px;
+            justify-content: center;
+            gap: 10px;
+            padding: 10px;
+            background: #fff;
+            border-bottom: 1px solid #ddd;
         }
 
         .tab {
-            flex: 1;
-            padding: 12px;
+            padding: 8px 16px;
             border: none;
-            background: transparent;
-            color: var(--tg-theme-text-color, #000000);
-            border-radius: 8px;
             cursor: pointer;
-            font-size: 14px;
+            background: #eee;
+            border-radius: 6px;
         }
 
         .tab.active {
-            background: var(--tg-theme-button-color, #2481cc);
-            color: var(--tg-theme-button-text-color, #ffffff);
+            background: #007bff;
+            color: white;
         }
 
-        .tab-content {
+        .container {
+            padding: 20px;
+        }
+
+        .job {
+            background: white;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .hidden {
             display: none;
         }
 
-        .tab-content.active {
-            display: block;
-        }
-
-        .stats {
-            font-size: 13px;
-            margin-bottom: 12px;
-            opacity: 0.8;
-        }
-
-        .job-card {
-            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            padding: 12px;
-            border-radius: 12px;
+        .group-row {
+            background: #fff;
+            padding: 10px;
+            border-radius: 8px;
             margin-bottom: 10px;
-        }
-
-        .job-card.archived {
-            opacity: 0.9;
-        }
-
-        .job-header {
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             display: flex;
             justify-content: space-between;
-            gap: 8px;
-            margin-bottom: 8px;
+            align-items: center;
         }
 
-        .job-channel,
-        .job-text,
-        .job-link {
-            word-wrap: break-word;
-            overflow-wrap: anywhere;
+        .group-url-input {
+            width: 75%;
+            padding: 8px;
         }
 
-        .job-channel {
-            font-weight: 600;
-            font-size: 14px;
-        }
-
-        .job-date {
-            font-size: 12px;
-            opacity: 0.7;
-            flex-shrink: 0;
-        }
-
-        .job-text {
-            font-size: 14px;
-            margin-bottom: 8px;
-            white-space: pre-wrap;
-        }
-
-        .job-link {
-            font-size: 13px;
-        }
-
-        .job-link a {
-            color: var(--tg-theme-link-color, #2481cc);
-            text-decoration: none;
-        }
-
-        .job-actions {
-            margin-top: 8px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-
-        .btn,
-        .secondary-btn,
-        .delete-btn {
-            border-radius: 8px;
-            border: none;
+        .group-enable-btn {
+            padding: 8px 12px;
             cursor: pointer;
-            font-size: 14px;
-            padding: 8px 12px;
         }
 
-        .btn {
-            background: var(--tg-theme-button-color, #2481cc);
-            color: var(--tg-theme-button-text-color, #ffffff);
-        }
-
-        .secondary-btn {
-            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            color: var(--tg-theme-text-color, #000000);
-            border: 1px solid rgba(0, 0, 0, 0.08);
-        }
-
-        .delete-btn {
-            background: #ff4b4b;
-            color: #ffffff;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 24px 0;
-            font-size: 14px;
-            opacity: 0.7;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 24px 0;
-            font-size: 14px;
-            opacity: 0.7;
-        }
-
-        .empty-state-icon {
-            font-size: 28px;
-            margin-bottom: 8px;
-        }
-
-        .add-channel-form {
-            background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-            padding: 16px;
-            border-radius: 12px;
-            margin-bottom: 16px;
-        }
-
-        .input-group {
-            margin-bottom: 12px;
-        }
-
-        .input-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 14px;
-            font-weight: 500;
-        }
-
-        .input-group input {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            border-radius: 8px;
-            font-size: 16px;
-            background: var(--tg-theme-bg-color, #ffffff);
-            color: var(--tg-theme-text-color, #000000);
-        }
-
-        .channels-header {
+        .tg-admin-row {
+            margin-bottom: 15px;
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
+            gap: 10px;
         }
 
-        .channels-count {
-            font-size: 13px;
-            opacity: 0.8;
-        }
-
-        .channel-item,
-        .user-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            padding: 10px 0;
-            border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-        }
-
-        .channel-info,
-        .user-info {
+        .tg-admin-row input {
             flex: 1;
-            min-width: 0;
+            padding: 8px;
         }
 
-        .channel-username,
-        .user-username {
-            font-size: 14px;
-            font-weight: 500;
-            word-wrap: break-word;
-            overflow-wrap: anywhere;
-        }
-
-        .channel-date,
-        .user-meta {
-            font-size: 12px;
-            opacity: 0.7;
-        }
-
-        .channel-item .delete-btn,
-        .user-item .delete-btn {
-            flex-shrink: 0;
-        }
-
-        @media (max-width: 480px) {
-            .channel-item,
-            .user-item {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            .channel-item .delete-btn,
-            .user-item .delete-btn {
-                align-self: stretch;
-                text-align: center;
-            }
-
-            .job-header {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            .job-date {
-                margin-top: 4px;
-            }
-        }
-
-        #error-message,
-        #success-message {
-            margin-bottom: 8px;
-        }
-
-        .error,
-        .success {
-            padding: 8px 12px;
-            border-radius: 8px;
-            font-size: 13px;
-        }
-
-        .error {
-            background: rgba(255, 75, 75, 0.12);
-            color: #d90429;
-        }
-
-        .success {
-            background: rgba(76, 175, 80, 0.15);
-            color: #2e7d32;
-        }
-
-        .access-denied {
-            padding: 24px 0;
-            text-align: center;
-        }
-
-        .settings-hint {
-            font-size: 13px;
-            opacity: 0.75;
-            margin-bottom: 12px;
+        .tg-admin-row button {
+            padding: 8px 14px;
         }
     </style>
+
 </head>
 <body>
-<div class="container" id="app-container">
+
+<header>
     <h1>Поиск вакансий</h1>
-    <div class="subtitle">Сбор вакансий из Telegram-каналов</div>
 
-<div class="tabs">
-    <button class="tab active" onclick="switchTab('jobs')">Вакансии</button>
-    <button class="tab" onclick="switchTab('channels')">TG-каналы</button>
-    <button class="tab" onclick="switchTab('fb')">FB-группы</button>
-    <button class="tab" onclick="switchTab('archive')">Архив</button>
+    <!-- ШЕСТЕРЁНКА ДЛЯ НАСТРОЕК -->
+    <div id="settings-gear" onclick="switchTab('settings')" title="Настройки">
+        ⚙️
+    </div>
+</header>
+
+<nav>
+    <button class="tab active" id="jobs-tab-btn" onclick="switchTab('jobs')">Активные вакансии</button>
+    <button class="tab" id="archive-tab-btn" onclick="switchTab('archive')">Архив</button>
+    <button class="tab" id="channels-tab-btn" onclick="switchTab('channels')">Telegram</button>
+    <button class="tab" id="fbgroups-tab-btn" onclick="switchTab('fbgroups')">Facebook</button>
+
+    <!-- Вкладка Настройки (скрывается для юзеров) -->
     <button class="tab" id="settings-tab-btn" onclick="switchTab('settings')">Настройки</button>
-</div>
+</nav>
 
+<div class="container">
 
-    <div id="error-message"></div>
-    <div id="success-message"></div>
+    <!-- TAB 1 — АКТИВНЫЕ ВАКАНСИИ -->
+    <div id="jobs-tab">
+        <div id="jobs-list"></div>
+    </div>
 
-    <div id="jobs-tab" class="tab-content active">
-        <div id="stats" class="stats">Загрузка статистики...</div>
-        <div id="jobs-list">
-            <div class="loading">Загрузка вакансий...</div>
+    <!-- TAB 2 — АРХИВ -->
+    <div id="archive-tab" class="hidden">
+        <div id="archive-list"></div>
+    </div>
+
+    <!-- TAB 3 — ТЕЛЕГРАМ-КАНАЛЫ -->
+    <div id="channels-tab" class="hidden">
+        <h3>Telegram каналы</h3>
+
+        <div id="channels-list"></div>
+
+        <div class="tg-admin-row">
+            <input type="text" id="new-channel" placeholder="https://t.me/...">
+            <button onclick="addChannel()">Добавить</button>
         </div>
     </div>
 
-    <div id="channels-tab" class="tab-content">
-        <div class="add-channel-form">
-            <div class="input-group">
-                <label for="channel-username">Username или ссылка на канал</label>
-                <input
-                    type="text"
-                    id="channel-username"
-                    placeholder="@python_jobs, python_jobs или https://t.me/python_jobs"
-                >
-            </div>
-            <button class="btn" onclick="addChannel()">Добавить канал</button>
-        </div>
+    <!-- TAB 4 — FACEBOOK ГРУППЫ -->
+    <div id="fbgroups-tab" class="hidden">
+        <h3>Facebook группы</h3>
 
-        <div class="channels-header">
-            <div class="channels-count" id="channels-count"></div>
-        </div>
+        <div id="fb-groups-list"></div>
 
-        <div id="channels-list">
-            <div class="loading">Загрузка каналов...</div>
+        <div class="tg-admin-row">
+            <input type="text" id="new-fb-group" placeholder="https://www.facebook.com/groups/...">
+            <button onclick="addFbGroup()">Добавить</button>
         </div>
     </div>
 
-<div id="fb-tab" class="tab-content">
-    <div class="add-channel-form">
-        <div class="settings-hint">
-            FB-группы для парсера. Добавь ссылку на группу Facebook — парсер будет
-            ходить по ним через Apify и тянуть релевантные посты.
+    <!-- TAB 5 — НАСТРОЙКИ -->
+    <div id="settings-tab" class="hidden">
+        <h3>Управление доступом</h3>
+
+        <div id="admin-list"></div>
+
+        <div class="tg-admin-row">
+            <input type="text" id="new-admin" placeholder="Telegram ID пользователя">
+            <button onclick="addAdmin()">Добавить</button>
         </div>
-        <div class="input-group">
-            <label for="fb-url">Ссылка на FB-группу</label>
-            <input
-                type="text"
-                id="fb-url"
-                placeholder="https://www.facebook.com/groups/1234567890"
-            >
-        </div>
-        <button class="btn" onclick="addFbGroup()">Добавить FB-группу</button>
+
     </div>
 
-    <div class="channels-header">
-        <div class="channels-count" id="fb-count"></div>
-    </div>
-
-    <div id="fb-list">
-        <div class="loading">Загрузка FB-групп...</div>
-    </div>
-</div>
-
-    
-    <div id="archive-tab" class="tab-content">
-        <div id="archive-list">
-            <div class="loading">Загрузка архива...</div>
-        </div>
-    </div>
-
-    <div id="settings-tab" class="tab-content">
-        <div class="add-channel-form">
-            <div class="settings-hint">
-                Управление доступами. Добавь @username — пользователь сможет заходить в мини-приложение и получать вакансии.
-            </div>
-            <div class="input-group">
-                <label for="user-username">Username пользователя</label>
-                <input
-                    type="text"
-                    id="user-username"
-                    placeholder="@opsifd, opsifd"
-                >
-            </div>
-            <button class="btn" onclick="addAllowedUser()">Выдать доступ</button>
-        </div>
-
-        <div class="channels-header">
-            <div class="channels-count" id="users-count"></div>
-        </div>
-
-        <div id="users-list">
-            <div class="loading">Загрузка пользователей...</div>
-        </div>
-    </div>
 </div>
 
 <script>
-    let tg = window.Telegram.WebApp;
-    tg.expand();
-    tg.ready();
+const API_BASE = window.location.origin;
 
-    const API_BASE = window.location.origin;
-    let currentTab = 'jobs';
-    let currentUserId = null;
-    let currentUsername = null;
-    let accessGranted = false;
-    let isAdmin = false;
+// ----------------------
+// ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК
+// ----------------------
+function switchTab(tab) {
+    document.querySelectorAll(".tab").forEach(btn => btn.classList.remove("active"));
+    document.querySelectorAll(".container > div").forEach(div => div.classList.add("hidden"));
 
-    // --- Инициализация и проверка доступа ---
+    document.getElementById(`${tab}-tab-btn`).classList.add("active");
+    document.getElementById(`${tab}-tab`).classList.remove("hidden");
 
-    async function initApp() {
-        try {
-            const unsafe = tg.initDataUnsafe || {};
-            if (unsafe.user) {
-                if (unsafe.user.id) {
-                    currentUserId = unsafe.user.id;
-                }
-                if (unsafe.user.username) {
-                    currentUsername = unsafe.user.username;
-                }
-            }
-
-            const resp = await fetch(`${API_BASE}/api/check_access`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    user_id: currentUserId,
-                    username: currentUsername
-                })
-            });
-
-            const data = await resp.json();
-
-            if (!data.allowed) {
-                const container = document.getElementById('app-container');
-                container.innerHTML = `
-                    <div class="access-denied">
-                        <h2>Нет доступа</h2>
-                        <p>Это мини-приложение доступно только для определённых пользователей.</p>
-                    </div>
-                `;
-                return;
-            }
-
-            accessGranted = true;
-            isAdmin = !!data.is_admin;
-
-            const settingsTabBtn = document.getElementById('settings-tab-btn');
-            const settingsTabDiv = document.getElementById('settings-tab');
-            if (!isAdmin && settingsTabBtn && settingsTabDiv) {
-                settingsTabBtn.style.display = 'none';
-                settingsTabDiv.style.display = 'none';
-            }
-
-            loadJobs();
-        } catch (e) {
-            console.error('Ошибка проверки доступа:', e);
-            accessGranted = true;
-            loadJobs();
-        }
-    }
-
-    // --- Переключение вкладок ---
-
-    function switchTab(tab) {
-        if (!accessGranted) return;
-        if (tab === 'settings' && !isAdmin) return;
-
-        currentTab = tab;
-
-        document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-
-        const tabBtn = document.querySelector(`.tab[onclick="switchTab('${tab}')"]`);
-        if (tabBtn) {
-            tabBtn.classList.add('active');
-        }
-        const tabDiv = document.getElementById(`${tab}-tab`);
-        if (tabDiv) {
-            tabDiv.classList.add('active');
-        }
-
-        if (tab === 'jobs') {
-        loadJobs();
-    } else if (tab === 'channels') {
-        loadChannels();
-    } else if (tab === 'fb') {
-        loadFbGroups();
-    } else if (tab === 'archive') {
-        loadArchive();
-    } else if (tab === 'settings') {
-        loadAllowedUsers();
-    }
+    if (tab === "jobs") loadJobs();
+    if (tab === "archive") loadArchive();
+    if (tab === "channels") loadChannels();
+    if (tab === "fbgroups") loadFbGroups();
+    if (tab === "settings") loadAdmins();
 }
 
+// ----------------------
+// ПРОВЕРКА ДОСТУПА
+// ----------------------
+async function initApp() {
+    const res = await fetch(`${API_BASE}/api/check_access`, {method: "POST"});
+    const data = await res.json();
 
-    // --- Jobs ---
+    const isAdmin = data.is_admin;
 
-    async function loadJobs() {
-        if (!accessGranted) return;
-        try {
-            const response = await fetch(`${API_BASE}/api/jobs?limit=50`);
-            const data = await response.json();
+    const settingsTabBtn = document.getElementById("settings-tab-btn");
+    const settingsTabDiv = document.getElementById("settings-tab");
+    const settingsGear = document.getElementById("settings-gear");
 
-            const jobsList = document.getElementById('jobs-list');
-            const statsDiv = document.getElementById('stats');
-
-            if (data.stats) {
-                const total = data.stats.total || 0;
-                const last24 = data.stats.last_24h || 0;
-                statsDiv.textContent = `Всего активных вакансий: ${total}. За последние 24 часа: ${last24}.`;
-            } else {
-                statsDiv.textContent = '';
-            }
-
-            if (data.jobs && data.jobs.length > 0) {
-                jobsList.innerHTML = data.jobs.map(job => `
-                    <div class="job-card">
-                        <div class="job-header">
-                            <div class="job-channel">${escapeHtml(job.chat_title || '')}</div>
-                            <div class="job-date">${formatDate(job.created_at)}</div>
-                        </div>
-                        <div class="job-text">${escapeHtml(job.text || '')}</div>
-                        ${job.link ? `<div class="job-link"><a href="${job.link}" target="_blank">Открыть в Telegram →</a></div>` : ''}
-                        <div class="job-actions">
-                            ${job.sender_username ? `
-                                <button class="secondary-btn" data-username="${escapeAttribute(job.sender_username)}" onclick="handleAuthorClick(event)">
-                                    Написать автору
-                                </button>
-                            ` : ''}
-                            <button class="secondary-btn" onclick="archiveJob(${job.id})">В архив</button>
-                            <button class="delete-btn" onclick="deleteJob(${job.id})">Удалить</button>
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                jobsList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">🔎</div>
-                        <div>Пока нет вакансий</div>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            console.error('Ошибка загрузки вакансий:', error);
-            showError('Ошибка загрузки вакансий');
-        }
+    if (!isAdmin) {
+        if (settingsTabBtn) settingsTabBtn.style.display = "none";
+        if (settingsTabDiv) settingsTabDiv.style.display = "none";
+        if (settingsGear) settingsGear.style.display = "none";
     }
 
-    // --- Archive ---
-
-    async function loadArchive() {
-        if (!accessGranted) return;
-        try {
-            const response = await fetch(`${API_BASE}/api/jobs/archive?limit=50`);
-            const data = await response.json();
-
-            const archiveList = document.getElementById('archive-list');
-
-            if (data.jobs && data.jobs.length > 0) {
-                archiveList.innerHTML = data.jobs.map(job => `
-                    <div class="job-card archived">
-                        <div class="job-header">
-                            <div class="job-channel">${escapeHtml(job.chat_title || '')}</div>
-                            <div class="job-date">${formatDate(job.created_at)}</div>
-                        </div>
-                        <div class="job-text">${escapeHtml(job.text || '')}</div>
-                        ${job.link ? `<div class="job-link"><a href="${job.link}" target="_blank">Открыть в Telegram →</a></div>` : ''}
-                        <div class="job-actions">
-                            ${job.sender_username ? `
-                                <button class="secondary-btn" data-username="${escapeAttribute(job.sender_username)}" onclick="handleAuthorClick(event)">
-                                    Написать автору
-                                </button>
-                            ` : ''}
-                            <button class="secondary-btn" onclick="restoreJob(${job.id})">Вернуть</button>
-                            <button class="delete-btn" onclick="deleteJob(${job.id})">Удалить</button>
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                archiveList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📦</div>
-                        <div>Архив пуст</div>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            console.error('Ошибка загрузки архива:', error);
-            showError('Ошибка загрузки архива');
-        }
-    }
-
-    // --- Channels ---
-
-    async function loadChannels() {
-        if (!accessGranted) return;
-        try {
-            const response = await fetch(`${API_BASE}/api/channels`);
-            const data = await response.json();
-
-            const channelsList = document.getElementById('channels-list');
-            const channelsCount = document.getElementById('channels-count');
-
-            if (data.channels && data.channels.length > 0) {
-                channelsCount.textContent = `Всего TG-каналов: ${data.channels.length}`;
-                channelsList.innerHTML = data.channels.map(channel => `
-                    <div class="channel-item">
-                        <div class="channel-info">
-                            <div class="channel-username">${escapeHtml(channel.username)}</div>
-                            <div class="channel-date">Добавлен: ${formatDate(channel.added_at)}</div>
-                        </div>
-                        <button class="delete-btn" onclick="deleteChannel(${channel.id})">Удалить</button>
-                    </div>
-                `).join('');
-            } else {
-                channelsCount.textContent = 'Каналы не добавлены';
-                channelsList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📢</div>
-                        <div>Пока не добавлено ни одного канала</div>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            console.error('Ошибка загрузки каналов:', error);
-            showError('Ошибка загрузки каналов');
-        }
-    }
-
-    async function addChannel() {
-        if (!accessGranted) return;
-        const input = document.getElementById('channel-username');
-        const rawInput = input.value.trim();
-
-        if (!rawInput) {
-            showError('Введите username или ссылку на канал');
-            return;
-        }
-
-        const username = extractUsername(rawInput);
-
-        if (!username) {
-            showError('Неверный формат. Используйте: @username, username или https://t.me/username');
-            return;
-        }
-
-        try {
-            const response = await fetch(`${API_BASE}/api/channels`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ username })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                showError(data.error || 'Ошибка добавления канала');
-                return;
-            }
-
-            showSuccess(`Канал ${username} успешно добавлен`);
-            input.value = '';
-            loadChannels();
-        } catch (error) {
-            console.error('Ошибка добавления канала:', error);
-            showError('Ошибка добавления канала');
-        }
-    }
-
-    async function deleteChannel(channelId) {
-        if (!accessGranted) return;
-        if (!confirm('Удалить канал? Парсер перестанет его читать.')) {
-            return;
-        }
-
-        try {
-            const response = await fetch(`${API_BASE}/api/channels/${channelId}`, {
-                method: 'DELETE'
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                showError(data.error || 'Ошибка удаления канала');
-                return;
-            }
-
-            showSuccess('Канал удалён');
-            loadChannels();
-        } catch (error) {
-            console.error('Ошибка удаления канала:', error);
-            showError('Ошибка удаления канала');
-        }
-    }
-    // --- FB Groups ---
-
-    async function loadFbGroups() {
-        if (!accessGranted) return;
-        try {
-            const response = await fetch(`${API_BASE}/api/fb_groups`);
-            const data = await response.json();
-
-            const fbList = document.getElementById('fb-list');
-            const fbCount = document.getElementById('fb-count');
-
-            if (data.groups && data.groups.length > 0) {
-                fbCount.textContent = `Всего FB-групп: ${data.groups.length}`;
-                fbList.innerHTML = data.groups.map(group => `
-                    <div class="channel-item">
-                        <div class="channel-info">
-                            <div class="channel-username">
-                                <a href="${escapeHtml(group.group_url)}" target="_blank">
-                                    ${escapeHtml(group.group_name || group.group_url)}
-                                </a>
-                            </div>
-                            <div class="channel-date">
-                                Добавлена: ${formatDate(group.added_at)}
-                            </div>
-                        </div>
-                        <button class="delete-btn" onclick="deleteFbGroup(${group.id})">Удалить</button>
-                    </div>
-                `).join('');
-            } else {
-                fbCount.textContent = 'FB-группы не добавлены';
-                fbList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📘</div>
-                        <div>Пока не добавлено ни одной FB-группы</div>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            console.error('Ошибка загрузки FB-групп:', error);
-            showError('Ошибка загрузки FB-групп');
-        }
-    }
-
-    async function addFbGroup() {
-        if (!accessGranted) return;
-
-        const input = document.getElementById('fb-url');
-        let groupUrl = (input.value || '').trim();
-
-        if (!groupUrl) {
-            showError('Укажи ссылку на FB-группу');
-            return;
-        }
-
-        try {
-            const response = await fetch(`${API_BASE}/api/fb_groups`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ group_url: groupUrl })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                showError(data.error || 'Ошибка добавления FB-группы');
-                return;
-            }
-
-            showSuccess('FB-группа успешно добавлена');
-            input.value = '';
-            loadFbGroups();
-        } catch (error) {
-            console.error('Ошибка добавления FB-группы:', error);
-            showError('Ошибка добавления FB-группы');
-        }
-    }
-
-    async function deleteFbGroup(groupId) {
-        if (!accessGranted) return;
-
-        if (!confirm('Удалить эту FB-группу?')) return;
-
-        try {
-            const response = await fetch(`${API_BASE}/api/fb_groups/${groupId}`, {
-                method: 'DELETE'
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                showError(data.error || 'Ошибка удаления FB-группы');
-                return;
-            }
-
-            showSuccess('FB-группа удалена');
-            loadFbGroups();
-        } catch (error) {
-            console.error('Ошибка удаления FB-группы:', error);
-            showError('Ошибка удаления FB-группы');
-        }
-    }
-
-    // --- Admin: allowed users ---
-
-    async function loadAllowedUsers() {
-        if (!accessGranted || !isAdmin) return;
-
-        try {
-            const response = await fetch(`${API_BASE}/api/allowed_users`);
-            const data = await response.json();
-
-            const usersList = document.getElementById('users-list');
-            const usersCount = document.getElementById('users-count');
-
-            if (data.users && data.users.length > 0) {
-                usersCount.textContent = `Всего пользователей с доступом: ${data.users.length}`;
-                usersList.innerHTML = data.users.map(user => {
-                    const usernameDisplay = user.username ? `@${escapeHtml(user.username)}` : '(без username)';
-                    const userIdDisplay = user.user_id ? `ID: ${user.user_id}` : 'ID ещё не получен';
-                    const updatedDisplay = user.updated_at ? `Обновлён: ${formatDate(user.updated_at)}` : '';
-                    return `
-                        <div class="user-item">
-                            <div class="user-info">
-                                <div class="user-username">${usernameDisplay}</div>
-                                <div class="user-meta">${userIdDisplay}${updatedDisplay ? ' • ' + updatedDisplay : ''}</div>
-                            </div>
-                            <button class="delete-btn" onclick="deleteAllowedUser(${user.id})">Удалить</button>
-                        </div>
-                    `;
-                }).join('');
-            } else {
-                usersCount.textContent = 'Пока нет выданных доступов';
-                usersList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">👥</div>
-                        <div>Список пользователей с доступом пуст</div>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            console.error('Ошибка загрузки пользователей с доступом:', error);
-            showError('Ошибка загрузки пользователей с доступом');
-        }
-    }
-
-    async function addAllowedUser() {
-        if (!accessGranted || !isAdmin) return;
-
-        const input = document.getElementById('user-username');
-        let rawInput = input.value.trim();
-        if (!rawInput) {
-            showError('Введите username пользователя');
-            return;
-        }
-
-        if (rawInput.startsWith('https://t.me/') || rawInput.startsWith('http://t.me/')) {
-            rawInput = rawInput.replace(/^https?:\/\/t\.me\//, '');
-        }
-        if (rawInput.startsWith('@')) {
-            rawInput = rawInput.slice(1);
-        }
-        rawInput = rawInput.replace(/\/+$/, '');
-
-        if (!rawInput) {
-            showError('Некорректный username');
-            return;
-        }
-
-        const usernameNorm = rawInput;
-
-        try {
-            const response = await fetch(`${API_BASE}/api/allowed_users`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ username: usernameNorm })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                showError(data.error || 'Ошибка выдачи доступа');
-                return;
-            }
-
-            showSuccess(`Доступ выдан пользователю @${usernameNorm}`);
-            input.value = '';
-            loadAllowedUsers();
-        } catch (error) {
-            console.error('Ошибка выдачи доступа:', error);
-            showError('Ошибка выдачи доступа');
-        }
-    }
-
-    async function deleteAllowedUser(allowedId) {
-        if (!accessGranted || !isAdmin) return;
-        if (!confirm('Удалить доступ у пользователя?')) {
-            return;
-        }
-
-        try {
-            const response = await fetch(`${API_BASE}/api/allowed_users/${allowedId}`, {
-                method: 'DELETE'
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                showError(data.error || 'Ошибка удаления доступа');
-                return;
-            }
-
-            showSuccess('Доступ пользователя удалён');
-            loadAllowedUsers();
-        } catch (error) {
-            console.error('Ошибка удаления доступа:', error);
-            showError('Ошибка удаления доступа');
-        }
-    }
-
-    // --- Job actions ---
-
-    async function archiveJob(jobId) {
-        if (!accessGranted) return;
-        try {
-            const response = await fetch(`${API_BASE}/api/jobs/${jobId}/archive`, {
-                method: 'POST'
-            });
-
-            const data = await response.json();
-            if (!response.ok) {
-                showError(data.error || 'Ошибка архивации вакансии');
-                return;
-            }
-
-            showSuccess('Вакансия отправлена в архив');
-            loadJobs();
-        } catch (error) {
-            console.error('Ошибка архивации вакансии:', error);
-            showError('Ошибка архивации вакансии');
-        }
-    }
-
-    async function restoreJob(jobId) {
-        if (!accessGranted) return;
-        try {
-            const response = await fetch(`${API_BASE}/api/jobs/${jobId}/restore`, {
-                method: 'POST'
-            });
-
-            const data = await response.json();
-            if (!response.ok) {
-                showError(data.error || 'Ошибка восстановления вакансии');
-                return;
-            }
-
-            showSuccess('Вакансия возвращена из архива');
-            loadArchive();
-        } catch (error) {
-            console.error('Ошибка восстановления вакансии:', error);
-            showError('Ошибка восстановления вакансии');
-        }
-    }
-
-    async function deleteJob(jobId) {
-        if (!accessGranted) return;
-        if (!confirm('Удалить вакансию навсегда?')) {
-            return;
-        }
-
-        try {
-            const response = await fetch(`${API_BASE}/api/jobs/${jobId}`, {
-                method: 'DELETE'
-            });
-
-            const data = await response.json();
-            if (!response.ok) {
-                showError(data.error || 'Ошибка удаления вакансии');
-                return;
-            }
-
-            showSuccess('Вакансия удалена');
-            if (currentTab === 'jobs') {
-                loadJobs();
-            } else if (currentTab === 'archive') {
-                loadArchive();
-            }
-        } catch (error) {
-            console.error('Ошибка удаления вакансии:', error);
-            showError('Ошибка удаления вакансии');
-        }
-    }
-
-    function handleAuthorClick(event) {
-        const btn = event.currentTarget;
-        const username = btn.getAttribute('data-username') || '';
-        writeToAuthor(username);
-    }
-
-    function writeToAuthor(username) {
-        if (!username) return;
-        let clean = username.trim();
-        if (clean.startsWith('@')) {
-            clean = clean.slice(1);
-        }
-        if (!clean) return;
-        const url = `https://t.me/${encodeURIComponent(clean)}`;
-        window.open(url, '_blank');
-    }
-
-    // --- Utils ---
-
-    function escapeHtml(text) {
-        if (text === null || text === undefined) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    function escapeAttribute(text) {
-        return String(text)
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    }
-
-    function formatDate(dateStr) {
-        if (!dateStr) return '';
-        const date = new Date(dateStr);
-        if (Number.isNaN(date.getTime())) return '';
-
-        const now = new Date();
-        const diff = now - date;
-
-        const minutes = Math.floor(diff / 60000);
-        const hours = Math.floor(diff / 3600000);
-        const days = Math.floor(diff / 86400000);
-
-        if (minutes < 1) return 'только что';
-        if (minutes < 60) return `${minutes} мин назад`;
-        if (hours < 24) return `${hours} ч назад`;
-        if (days < 7) return `${days} дн назад`;
-
-        return date.toLocaleDateString('ru-RU');
-    }
-
-    function showError(message) {
-        const errorDiv = document.getElementById('error-message');
-        errorDiv.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
-        setTimeout(() => {
-            errorDiv.innerHTML = '';
-        }, 3500);
-    }
-
-    function showSuccess(message) {
-        const successDiv = document.getElementById('success-message');
-        successDiv.innerHTML = `<div class="success">${escapeHtml(message)}</div>`;
-        setTimeout(() => {
-            successDiv.innerHTML = '';
-        }, 3000);
-    }
-
-    function extractUsername(input) {
-        let value = input.trim();
-
-        if (value.startsWith('https://t.me/')) {
-            value = value.replace('https://t.me/', '');
-        } else if (value.startsWith('http://t.me/')) {
-            value = value.replace('http://t.me/', '');
-        }
-
-        if (value.startsWith('@')) {
-            value = value.slice(1);
-        }
-
-        value = value.replace(/\/+$/, '');
-
-        if (!value) return null;
-
-        return `@${value}`;
-    }
-
-    // Старт
-    initApp();
+    loadJobs();
+}
+
+// ----------------------
+// ЗАГРУЗКА ВАКАНСИЙ
+// ----------------------
+async function loadJobs() {
+    const res = await fetch(`${API_BASE}/api/jobs?limit=50`);
+    const data = await res.json();
+
+    const list = document.getElementById("jobs-list");
+    list.innerHTML = "";
+
+    data.forEach(job => {
+        list.innerHTML += `
+            <div class="job">
+                <div>${job.text}</div>
+                <a href="${job.url}" target="_blank">Ссылка</a>
+            </div>
+        `;
+    });
+}
+
+// ----------------------
+// АРХИВ
+// ----------------------
+async function loadArchive() {
+    const res = await fetch(`${API_BASE}/api/jobs/archive?limit=50`);
+    if (res.status !== 200) return;
+
+    const data = await res.json();
+    const list = document.getElementById("archive-list");
+    list.innerHTML = "";
+
+    data.forEach(job => {
+        list.innerHTML += `
+            <div class="job">
+                <div>${job.text}</div>
+                <a href="${job.url}" target="_blank">Ссылка</a>
+            </div>
+        `;
+    });
+}
+
+// ----------------------
+// TELEGRAM КАНАЛЫ
+// ----------------------
+async function loadChannels() {
+    const res = await fetch(`${API_BASE}/api/channels`);
+    const channels = await res.json();
+
+    const list = document.getElementById("channels-list");
+    list.innerHTML = "";
+
+    channels.forEach(ch => {
+        list.innerHTML += `
+            <div class="group-row">
+                <input class="group-url-input" value="${ch.url}" readonly>
+                <button class="group-enable-btn" onclick="toggleChannel(${ch.id})">
+                    ${ch.enabled ? "Отключить" : "Включить"}
+                </button>
+            </div>
+        `;
+    });
+}
+
+async function toggleChannel(id) {
+    await fetch(`${API_BASE}/api/channels/${id}/toggle`, {method: "POST"});
+    loadChannels();
+}
+
+async function addChannel() {
+    const url = document.getElementById("new-channel").value.trim();
+    if (!url) return;
+
+    await fetch(`${API_BASE}/api/channels`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({url})
+    });
+
+    document.getElementById("new-channel").value = "";
+    loadChannels();
+}
+
+// ----------------------
+// FACEBOOK ГРУППЫ
+// ----------------------
+async function loadFbGroups() {
+    const res = await fetch(`${API_BASE}/api/fb_groups`);
+    const groups = await res.json();
+
+    const list = document.getElementById("fb-groups-list");
+    list.innerHTML = "";
+
+    groups.forEach(g => {
+        list.innerHTML += `
+            <div class="group-row">
+                <input class="group-url-input" value="${g.group_id}" readonly>
+                <button class="group-enable-btn" onclick="toggleFbGroup(${g.id})">
+                    ${g.enabled ? "Отключить" : "Включить"}
+                </button>
+            </div>
+        `;
+    });
+}
+
+async function toggleFbGroup(id) {
+    await fetch(`${API_BASE}/api/fb_groups/${id}/toggle`, {method: "POST"});
+    loadFbGroups();
+}
+
+async function addFbGroup() {
+    const url = document.getElementById("new-fb-group").value.trim();
+    if (!url) return;
+
+    await fetch(`${API_BASE}/api/fb_groups`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({url})
+    });
+
+    document.getElementById("new-fb-group").value = "";
+    loadFbGroups();
+}
+
+// ----------------------
+// АДМИНЫ
+// ----------------------
+async function loadAdmins() {
+    const res = await fetch(`${API_BASE}/api/admins`);
+    const admins = await res.json();
+
+    const list = document.getElementById("admin-list");
+    list.innerHTML = "";
+
+    admins.forEach(a => {
+        list.innerHTML += `
+            <div class="group-row">
+                <div>${a.user_id}</div>
+                <button onclick="removeAdmin(${a.id})">Удалить</button>
+            </div>
+        `;
+    });
+}
+
+async function addAdmin() {
+    const id = document.getElementById("new-admin").value.trim();
+    if (!id) return;
+
+    await fetch(`${API_BASE}/api/admins`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({user_id: id})
+    });
+
+    document.getElementById("new-admin").value = "";
+    loadAdmins();
+}
+
+async function removeAdmin(id) {
+    await fetch(`${API_BASE}/api/admins/${id}`, {method: "DELETE"});
+    loadAdmins();
+}
+
+// ----------------------
+initApp();
 </script>
+
 </body>
 </html>
