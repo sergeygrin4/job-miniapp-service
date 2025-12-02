@@ -794,6 +794,58 @@ def list_jobs():
 
     return jsonify({"jobs": jobs})
 
+@app.route("/api/jobs/archive", methods=["GET"])
+def list_archived_jobs():
+    """
+    Возвращает архивированные вакансии.
+    ?limit=50
+    """
+    try:
+        limit = int(request.args.get("limit", "50"))
+    except ValueError:
+        limit = 50
+    if limit <= 0 or limit > 500:
+        limit = 50
+
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, source, source_name, external_id, url, text, sender_username,
+                   created_at, received_at, archived, archived_at
+            FROM jobs
+            WHERE archived = TRUE
+            ORDER BY archived_at DESC NULLS LAST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logger.error("Ошибка загрузки архивных jobs: %s", e)
+        return jsonify({"jobs": []})
+
+    jobs = []
+    for row in rows:
+        jobs.append(
+            {
+                "id": row["id"],
+                "source": row["source"],
+                "source_name": row.get("source_name"),
+                "external_id": row["external_id"],
+                "url": row.get("url"),
+                "text": row.get("text"),
+                "sender_username": row.get("sender_username"),
+                "created_at": _iso(row.get("created_at")),
+                "received_at": _iso(row.get("received_at")),
+                "archived": row.get("archived", False),
+                "archived_at": _iso(row.get("archived_at")),
+            }
+        )
+    return jsonify({"jobs": jobs})
+
 
 # ---------------- Приём вакансий от парсеров (TG + FB) ----------------
 
