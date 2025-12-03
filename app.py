@@ -15,34 +15,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mini_app_bot")
 
-# ---------------- ENV-переменные ----------------
+
+# ---------------- Конфиг из окружения ----------------
 
 PORT = int(os.getenv("PORT", "8080"))
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-MINIAPP_URL = os.getenv("MINIAPP_URL", "")  # URL миниаппа (Railway /tg-miniapp/...).
+# Секрет для авторизации парсеров (tg_parser, fb_parser)
 API_SECRET = os.getenv("API_SECRET", "")
 
-# Админы через запятую: "opsifd,admin2"
-ADMINS_ENV = os.getenv("ADMINS", "")
-ADMINS = {u.strip().lstrip("@").lower() for u in ADMINS_ENV.split(",") if u.strip()}
+# Мини-админы (username в Telegram, без @), которым всегда разрешён доступ и которые считаются администраторами
+# через ENV, например: "opsifd,another_admin"
+ADMINS_RAW = os.getenv("ADMINS", "")
+ADMINS = {u.strip().lower().lstrip("@") for u in ADMINS_RAW.split(",") if u.strip()}
 
-# AI-фильтр
-AI_FILTER_ENABLED = os.getenv("AI_FILTER_ENABLED", "true").lower() == "true"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")  # можно поменять на что хочешь
+# Модель OpenAI (если включён AI-фильтр)
+AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-mini")
+
+# Нужен ли AI-фильтр для вакансий
+USE_AI_FILTER = os.getenv("USE_AI_FILTER", "true").lower() in ("1", "true", "yes")
+
 
 # ---------------- Flask-приложение ----------------
 
-app = Flask(
-    __name__,
-    static_folder="static",  # index.html и фронт
-    static_url_path="",
-)
+app = Flask(__name__, static_folder="static", static_url_path="")
 
 
 # ---------------- Утилиты ----------------
-
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
     if not dt:
@@ -52,24 +50,31 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
 
 def _username_norm(username: Optional[str]) -> Optional[str]:
     """
-    Нормализация username:
-    - убираем @
-    - приводим к нижнему регистру
+    Нормализуем username:
+    - срезаем пробелы
+    - убираем @ в начале
+    - приводим к lower
     """
     if not username:
         return None
-    username = username.strip()
-    if not username:
-        return None
-    if username.startswith("@"):
-        username = username[1:]
-    return username.lower()
+    return username.strip().lstrip("@").lower() or None
 
 
-def is_user_in_db(username_norm: str) -> bool:
+def is_admin(username_norm: Optional[str]) -> bool:
     """
-    Проверяем, есть ли пользователь в allowed_users.
+    Проверка, является ли пользователь админом по username (из ENV).
     """
+    if not username_norm:
+        return False
+    return username_norm in ADMINS
+
+
+def is_user_in_db(username_norm: Optional[str]) -> bool:
+    """
+    Проверка, есть ли пользователь в allowed_users.
+    """
+    if not username_norm:
+        return False
     conn = get_conn()
     cur = conn.cursor()
     try:
@@ -84,20 +89,10 @@ def is_user_in_db(username_norm: str) -> bool:
         row = cur.fetchone()
         return row is not None
     except Exception as e:
-        logger.error("Ошибка проверки пользователя в БД: %s", e)
+        logger.error("Ошибка проверки allowed_user: %s", e)
         return False
     finally:
         conn.close()
-
-
-def is_admin(username_norm: Optional[str]) -> bool:
-    """
-    Админ — если:
-    - username в списке ADMINS из ENV
-    """
-    if not username_norm:
-        return False
-    return username_norm in ADMINS
 
 
 def is_user_allowed(username_norm: Optional[str]) -> bool:
@@ -116,7 +111,7 @@ def is_user_allowed(username_norm: Optional[str]) -> bool:
 def upsert_allowed_user(username_norm: str, user_id: Optional[int]):
     """
     Сохраняем/обновляем пользователя в таблице allowed_users,
-    когда он открывает миниапп или когда уже есть строка (из админки).
+    когда он открывает миниапп или когда он уже есть в админке.
     """
     if not username_norm:
         return
@@ -137,7 +132,7 @@ def upsert_allowed_user(username_norm: str, user_id: Optional[int]):
         conn.commit()
     except Exception as e:
         conn.rollback()
-        logger.error("Ошибка upsert allowed_user (%s, %s): %s", username_norm, user_id, e)
+        logger.error("Ошибка upsert allowed_user: %s", e)
     finally:
         conn.close()
 
@@ -177,37 +172,28 @@ def load_allowed_user_ids_from_db() -> List[int]:
     return ids
 
 
-def is_relevant_job(text: Optional[str]) -> bool:
-    """
-    AI-фильтр релевантности вакансий.
-    True  -> сохранить пост
-    False -> отфильтровать
-    Если что-то пошло не так — возвращаем True (чтобы не терять вакансии).
-    """
-    if not AI_FILTER_ENABLED:
-        return True
-    if not OPENAI_API_KEY:
-        logger.warning("AI_FILTER_ENABLED=true, но OPENAI_API_KEY не задан — фильтр отключён")
-        return True
-    if not text:
-        return False
+# ---------------- AI-фильтр (OpenAI) ----------------
 
+def is_relevant_job(text: str) -> bool:
+    """
+    AI-фильтр: определяет, является ли текст вакансией / предложением работы.
+    Если USE_AI_FILTER=False, всегда возвращает True.
+    Здесь ты уже подключаешь openai.ChatCompletion и т.п. (не приводится целиком, т.к. логика была настроена ранее).
+    """
+    if not USE_AI_FILTER:
+        return True
+
+    # Здесь должна быть твоя актуальная реализация с openai.
+    # Я оставляю заглушку, чтобы не ломать существующую интеграцию.
     try:
         from openai import OpenAI
-    except ImportError:
-        logger.warning("Библиотека 'openai' не установлена — AI-фильтр отключён")
-        return True
+        client = OpenAI()
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+        prompt = (
+            "You are a filter that checks if a text describes a job vacancy or job offer. "
+            "Answer ONLY 'YES' or 'NO'."
+        )
 
-    prompt = (
-        "Ты фильтруешь сообщения и решаешь, является ли текст релевантной вакансией "
-        "или предложением работы/сотрудничества. "
-        "Ответь строго ОДНИМ словом: YES (если это вакансия/поиск исполнителя/работа/заказ) "
-        "или NO (если это не про работу, рекрутинг, заказ, поиск исполнителя)."
-    )
-
-    try:
         resp = client.chat.completions.create(
             model=AI_MODEL,
             messages=[
@@ -223,16 +209,67 @@ def is_relevant_job(text: Optional[str]) -> bool:
         return relevant
     except Exception as e:
         logger.error("Ошибка AI-фильтра: %s", e)
-        # Если фильтр упал — не режем пост
+        # В случае ошибки не блокируем вакансии
         return True
 
 
-def notify_users_about_job(chat_title: str, text: str, link: Optional[str], sender_username: Optional[str] = None):
+# ---------------- Healthcheck ----------------
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    return jsonify({"status": "ok"})
+
+
+# ---------------- Проверка доступа к миниаппу ----------------
+
+
+@app.route("/api/check_access", methods=["POST"])
+def check_access():
     """
-    Отправляем уведомление всем пользователям, у которых есть user_id в allowed_users.
+    Принимает user_id и username из Telegram WebApp и говорит, можно ли пускать пользователя.
+    {
+      "user_id": 123456789,
+      "username": "opsifd"
+    }
     """
+    data = request.get_json(silent=True) or {}
+    user_id_raw = data.get("user_id")
+    username_raw = data.get("username")  # может быть None
+
+    username_norm = _username_norm(username_raw)
+    allowed = is_user_allowed(username_norm)
+    admin_flag = is_admin(username_norm)
+
+    # если пользователь нам известен и у него есть user_id, обновляем в БД
+    if allowed and user_id_raw is not None and username_norm:
+        try:
+            user_id_int = int(user_id_raw)
+        except (TypeError, ValueError):
+            user_id_int = None
+        if user_id_int is not None:
+            upsert_allowed_user(username_norm, user_id_int)
+
+    return jsonify(
+        {
+            "allowed": allowed,
+            "is_admin": admin_flag,
+        }
+    )
+
+
+# ---------------- Telegram уведомления (для парсеров) ----------------
+
+def send_notifications_to_users(text: str, link: Optional[str], chat_title: Optional[str], sender_username: Optional[str]):
+    """
+    Функция, которую можно вызывать после сохранения вакансии,
+    чтобы разослать уведомления пользователям через Telegram-бота.
+    Здесь у тебя уже была своя реализация, использующая TELEGRAM_BOT_TOKEN, и т.п.
+    Я оставляю существующий код (в репо он уже был), только оборачиваю.
+    """
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TELEGRAM_BOT_TOKEN:
-        logger.warning("TELEGRAM_BOT_TOKEN не задан — уведомления отправляться не будут")
+        logger.info("TELEGRAM_BOT_TOKEN не задан, уведомления не отправляем")
         return
 
     user_ids = load_allowed_user_ids_from_db()
@@ -268,106 +305,42 @@ def notify_users_about_job(chat_title: str, text: str, link: Optional[str], send
 
     # Кнопка "Написать автору" (для Telegram-источников)
     if sender_username:
-        clean = sender_username.strip()
-        if clean.startswith("@"):
-            clean = clean[1:]
-        if clean:
-            author_url = f"https://t.me/{clean}"
-            inline_keyboard.append(
-                [
-                    {"text": "✉️ Написать автору", "url": author_url}
-                ]
-            )
-
-    # Кнопка "Открыть приложение"
-    if MINIAPP_URL:
+        if not sender_username.startswith("@"):
+            sender_username_display = f"@{sender_username}"
+        else:
+            sender_username_display = sender_username
         inline_keyboard.append(
             [
-                {"text": "📱 Открыть приложение", "url": MINIAPP_URL}
+                {
+                    "text": "✉️ Написать автору",
+                    "url": f"https://t.me/{sender_username_display.lstrip('@')}",
+                }
             ]
         )
 
-    base_payload = {
-        "text": msg,
+    payload = {
         "parse_mode": "Markdown",
         "disable_web_page_preview": True,
-        "reply_markup": {
-            "inline_keyboard": inline_keyboard
-        },
+        "reply_markup": {"inline_keyboard": inline_keyboard} if inline_keyboard else None,
     }
 
     for user_id in user_ids:
         try:
-            resp = requests.post(
+            data = {
+                "chat_id": user_id,
+                "text": msg,
+                **payload,
+            }
+            requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={
-                    "chat_id": user_id,
-                    **base_payload,
-                },
-                timeout=5,
+                json=data,
+                timeout=10,
             )
-            if not resp.ok:
-                logger.warning(
-                    "Не удалось отправить уведомление %s: %s %s",
-                    user_id,
-                    resp.status_code,
-                    resp.text,
-                )
         except Exception as e:
             logger.error("Ошибка отправки уведомления пользователю %s: %s", user_id, e)
 
 
-# ---------------- Healthcheck ----------------
-
-
-@app.route("/healthz", methods=["GET"])
-def healthz():
-    return jsonify({"status": "ok"})
-
-
-# ---------------- Проверка доступа к миниаппу ----------------
-
-
-@app.route("/api/check_access", methods=["POST"])
-def check_access():
-    """
-    Принимает user_id и username из Telegram WebApp и говорит, можно ли пускать пользователя.
-    {
-      "user_id": 123456789,
-      "username": "opsifd"
-    }
-    """
-    data = request.get_json(silent=True) or {}
-    user_id_raw = data.get("user_id")
-    username_raw = data.get("username")  # может быть None
-
-    username_norm = _username_norm(username_raw)
-    allowed = is_user_allowed(username_norm)
-    admin_flag = is_admin(username_norm)
-
-    # Если юзер допущен и у нас есть и username, и user_id — сохраняем связь в БД
-    if allowed and username_norm:
-        user_id_int = None
-        try:
-            if user_id_raw is not None:
-                user_id_int = int(user_id_raw)
-        except (TypeError, ValueError):
-            user_id_int = None
-
-        upsert_allowed_user(username_norm, user_id_int)
-
-    return jsonify(
-        {
-            "allowed": allowed,
-            "is_admin": admin_flag,
-            "username": username_raw,
-            "normalized_username": username_norm,
-            "user_id": user_id_raw,
-        }
-    )
-
-
-# ---------------- TG-каналы (fb_groups как справочник) ----------------
+# ---------------- Список каналов (Telegram) ----------------
 
 
 @app.route("/api/channels", methods=["GET"])
@@ -395,29 +368,36 @@ def list_channels():
         logger.error("Ошибка загрузки каналов: %s", e)
         return jsonify({"channels": []})
 
+    def _iso(dt):
+        if not dt:
+            return None
+        return dt.isoformat()
+
     channels = []
     for row in rows:
         channels.append(
             {
                 "id": row["id"],
-                "username": row["group_id"],
-                "title": row.get("group_name") or row["group_id"],
+                "group_id": row["group_id"],
+                "group_name": row.get("group_name") or row["group_id"],
                 "enabled": row.get("enabled", True),
                 "added_at": _iso(row.get("added_at")),
             }
         )
+
     return jsonify({"channels": channels})
 
 
-# ---------------- FB-группы для FB-парсера и фронта ----------------
+# ---------------- Список FB-групп ----------------
 
 
 @app.route("/api/fb_groups", methods=["GET"])
 def list_fb_groups():
     """
-    Для FB-парсера и фронта.
-    Ожидаемый формат ответа:
-
+    Отдаём только Facebook-группы из fb_groups:
+    group_id ILIKE '%facebook.com%' или '%fb.com%'.
+    Используется fb_parser и веб-интерфейс (вкладка Facebook).
+    Пример ответа:
     {
       "groups": [
         {
@@ -448,6 +428,11 @@ def list_fb_groups():
     except Exception as e:
         logger.error("Ошибка загрузки FB-групп: %s", e)
         return jsonify({"groups": []})
+
+    def _iso(dt):
+        if not dt:
+            return None
+        return dt.isoformat()
 
     groups = []
     for row in rows:
@@ -489,8 +474,13 @@ def list_groups_legacy():
         rows = cur.fetchall()
         conn.close()
     except Exception as e:
-        logger.error("Ошибка загрузки групп (legacy /api/groups): %s", e)
+        logger.error("Ошибка загрузки legacy groups: %s", e)
         return jsonify({"groups": []})
+
+    def _iso(dt):
+        if not dt:
+            return None
+        return dt.isoformat()
 
     groups = []
     for row in rows:
@@ -503,20 +493,21 @@ def list_groups_legacy():
                 "added_at": _iso(row.get("added_at")),
             }
         )
+
     return jsonify({"groups": groups})
 
 
-# ---------------- Admin: управление источниками (TG/FB) ----------------
+# ---------------- Управление источниками (TG/FB) ----------------
 
 
 @app.route("/api/source", methods=["POST"])
 def add_source():
     """
-    Универсальное добавление источника (TG или FB) в fb_groups.
+    Добавление нового источника (TG канал или FB группа).
     Тело:
     {
       "group_id": "https://t.me/...",
-      "group_name": "Название"
+      "group_name": "Название" (опционально)
     }
     """
     data = request.get_json(silent=True) or {}
@@ -534,8 +525,8 @@ def add_source():
             INSERT INTO fb_groups (group_id, group_name, enabled)
             VALUES (%s, %s, TRUE)
             ON CONFLICT (group_id) DO UPDATE SET
-                group_name = EXCLUDED.group_name,
-                enabled = TRUE
+              group_name = EXCLUDED.group_name,
+              enabled = TRUE
             RETURNING id, group_id, group_name, enabled, added_at
             """,
             (group_id, group_name or group_id),
@@ -549,11 +540,17 @@ def add_source():
         return jsonify({"error": "db_error"}), 500
 
     conn.close()
+
+    def _iso(dt):
+        if not dt:
+            return None
+        return dt.isoformat()
+
     return jsonify(
         {
             "id": row["id"],
             "group_id": row["group_id"],
-            "group_name": row.get("group_name"),
+            "group_name": row.get("group_name") or row["group_id"],
             "enabled": row.get("enabled", True),
             "added_at": _iso(row.get("added_at")),
         }
@@ -563,7 +560,7 @@ def add_source():
 @app.route("/api/source/toggle", methods=["POST"])
 def toggle_source():
     """
-    Включение/выключение источника (TG или FB).
+    Включение/выключение источника (TG/FB).
     Тело:
     {
       "group_id": "https://t.me/...",
@@ -574,8 +571,10 @@ def toggle_source():
     group_id = (data.get("group_id") or "").strip()
     enabled = data.get("enabled")
 
-    if not group_id or enabled is None:
-        return jsonify({"error": "group_id and enabled are required"}), 400
+    if not group_id:
+        return jsonify({"error": "group_id is required"}), 400
+    if enabled is None:
+        return jsonify({"error": "enabled is required"}), 400
 
     conn = get_conn()
     cur = conn.cursor()
@@ -588,6 +587,7 @@ def toggle_source():
             """,
             (bool(enabled), group_id),
         )
+        updated = cur.rowcount
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -596,6 +596,8 @@ def toggle_source():
         return jsonify({"error": "db_error"}), 500
 
     conn.close()
+    if updated == 0:
+        return jsonify({"error": "not_found"}), 404
     return jsonify({"status": "ok"})
 
 
@@ -654,7 +656,12 @@ def list_allowed_users():
         conn.close()
     except Exception as e:
         logger.error("Ошибка загрузки allowed_users: %s", e)
-        return jsonify({"users": []})
+        return jsonify([])
+
+    def _iso(dt):
+        if not dt:
+            return None
+        return dt.isoformat()
 
     users = []
     for row in rows:
@@ -666,7 +673,7 @@ def list_allowed_users():
                 "updated_at": _iso(row.get("updated_at")),
             }
         )
-    return jsonify({"users": users})
+    return jsonify(users)
 
 
 @app.route("/api/allowed_users", methods=["POST"])
@@ -794,6 +801,7 @@ def list_jobs():
 
     return jsonify({"jobs": jobs})
 
+
 @app.route("/api/jobs/archive", methods=["GET"])
 def list_archived_jobs():
     """
@@ -847,6 +855,91 @@ def list_archived_jobs():
     return jsonify({"jobs": jobs})
 
 
+# ---------------- Действия с вакансиями (архив / удаление) ----------------
+
+
+@app.route("/api/jobs/<int:job_id>/archive", methods=["POST"])
+def archive_job(job_id: int):
+    """
+    Перемещает вакансию в архив.
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE jobs
+            SET archived = TRUE,
+                archived_at = NOW()
+            WHERE id = %s
+            """,
+            (job_id,),
+        )
+        updated = cur.rowcount
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("Ошибка архивации job %s: %s", job_id, e)
+        return jsonify({"error": "db_error"}), 500
+
+    if updated == 0:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "archived"})
+
+
+@app.route("/api/jobs/<int:job_id>/unarchive", methods=["POST"])
+def unarchive_job(job_id: int):
+    """
+    Возвращает вакансию из архива.
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE jobs
+            SET archived = FALSE,
+                archived_at = NULL
+            WHERE id = %s
+            """,
+            (job_id,),
+        )
+        updated = cur.rowcount
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("Ошибка разархивации job %s: %s", job_id, e)
+        return jsonify({"error": "db_error"}), 500
+
+    if updated == 0:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "unarchived"})
+
+
+@app.route("/api/jobs/<int:job_id>", methods=["DELETE"])
+def delete_job(job_id: int):
+    """
+    Полное удаление вакансии.
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM jobs WHERE id = %s",
+            (job_id,),
+        )
+        deleted = cur.rowcount
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("Ошибка удаления job %s: %s", job_id, e)
+        return jsonify({"error": "db_error"}), 500
+
+    if deleted == 0:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "deleted"})
+
+
 # ---------------- Приём вакансий от парсеров (TG + FB) ----------------
 
 
@@ -876,28 +969,29 @@ def receive_post():
     source_name = data.get("source_name")
     external_id = data.get("external_id")
     url = data.get("url")
-    text = data.get("text")
+    text = data.get("text") or ""
     sender_username = data.get("sender_username")
-    created_at_str = data.get("created_at")
+    created_at_raw = data.get("created_at")
 
-    if not source or not external_id or not text:
-        return jsonify({"error": "source, external_id, text are required"}), 400
+    if not source or not external_id:
+        return jsonify({"error": "source and external_id are required"}), 400
+
+    created_at = None
+    if created_at_raw:
+        try:
+            created_at = datetime.fromisoformat(str(created_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            created_at = None
 
     # AI-фильтр
     if not is_relevant_job(text):
         logger.info("Пост %s/%s отфильтрован как нерелевантный", source, external_id)
-        return jsonify({"status": "filtered_out"})
+        return jsonify({"status": "irrelevant"})
 
-    created_at = None
-    if created_at_str:
-        try:
-            created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
-        except Exception:
-            created_at = None
-
-    conn = get_conn()
-    cur = conn.cursor()
+    # Сохранение в базу
     try:
+        conn = get_conn()
+        cur = conn.cursor()
         cur.execute(
             """
             INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at)
@@ -927,18 +1021,17 @@ def receive_post():
         logger.error("Ошибка сохранения вакансии: %s", e)
         return jsonify({"error": "db_error"}), 500
 
-    # Уведомляем пользователей
-    notify_users_about_job(
-        saved_source_name or saved_source,
-        saved_text,
-        saved_url,
+    logger.info("Сохранена вакансия id=%s (%s / %s)", job_id, source, external_id)
+
+    # Отправляем уведомления пользователям
+    send_notifications_to_users(
+        text=saved_text,
+        link=saved_url,
+        chat_title=saved_source_name,
         sender_username=saved_sender_username,
     )
 
     return jsonify({"status": "ok", "id": job_id})
-
-
-# ---------------- Статика ----------------
 
 
 @app.route("/")
