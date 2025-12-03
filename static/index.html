@@ -3,21 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вакансии</title>
-
+    <title>HRparser · Вакансии</title>
     <style>
+        :root {
+            --accent: #0088cc;
+            --accent-soft: #e3f4ff;
+            --danger: #e53935;
+            --danger-soft: #ffebee;
+            --card-bg: #ffffff;
+            --border-soft: #e0e0e0;
+            --text-main: #222222;
+            --text-muted: #777777;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: Arial, sans-serif;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             margin: 0;
             padding: 0;
             background: #f4f4f4;
+            color: var(--text-main);
         }
 
         header {
-            background: #fff;
-            padding: 10px 0;
-            text-align: center;
-            border-bottom: 1px solid #ddd;
+            background: #ffffff;
+            padding: 10px 16px 12px 16px;
+            border-bottom: 1px solid #dddddd;
             position: relative;
         }
 
@@ -27,74 +41,95 @@
         }
 
         header p {
-            margin: 4px 0 0 0;
+            margin: 2px 0 0 0;
             font-size: 12px;
-            color: #666;
+            color: var(--text-muted);
         }
 
         #settings-gear {
             position: absolute;
-            top: 12px;
+            top: 10px;
             right: 16px;
-            font-size: 24px;
+            font-size: 20px;
             cursor: pointer;
-            opacity: 0.75;
+            opacity: 0.8;
             user-select: none;
+            transition: transform 0.1s ease, opacity 0.1s ease;
+        }
+
+        #settings-gear:hover {
+            transform: rotate(15deg);
+            opacity: 1;
         }
 
         nav {
             display: flex;
-            background: #fff;
-            border-bottom: 1px solid #ddd;
+            background: #ffffff;
+            border-bottom: 1px solid #dddddd;
         }
 
         nav button {
             flex: 1;
-            padding: 10px;
+            padding: 10px 6px;
             border: none;
-            background: #fff;
+            background: #ffffff;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 13px;
+            color: var(--text-muted);
         }
 
         nav button.active {
-            border-bottom: 3px solid #0088cc;
-            font-weight: bold;
+            color: var(--accent);
+            font-weight: 600;
+            border-bottom: 3px solid var(--accent);
         }
 
         .container {
-            padding: 20px;
+            padding: 12px;
         }
 
-        .job {
-            background: white;
-            padding: 15px;
+        .summary {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .job-card {
+            background: var(--card-bg);
+            border-radius: 10px;
+            padding: 10px 12px;
             margin-bottom: 10px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+            border: 1px solid rgba(0,0,0,0.03);
         }
 
         .job-source {
             font-size: 12px;
-            color: #555;
-            margin-bottom: 4px;
+            color: var(--accent);
+            margin-bottom: 2px;
+            word-break: break-all;
         }
 
-        .job-created {
+        .job-meta {
             font-size: 11px;
-            color: #999;
+            color: var(--text-muted);
             margin-bottom: 8px;
         }
 
         .job-text {
-            font-size: 14px;
+            font-size: 13px;
+            line-height: 1.4;
             margin-bottom: 8px;
             white-space: pre-wrap;
         }
 
-        .job-link a {
+        .job-link {
             font-size: 13px;
-            color: #0088cc;
+            margin-bottom: 8px;
+        }
+
+        .job-link a {
+            color: var(--accent);
             text-decoration: none;
         }
 
@@ -102,80 +137,106 @@
             text-decoration: underline;
         }
 
-        .hidden {
-            display: none;
+        .job-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 12px;
+            border: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .btn-secondary {
+            background: var(--accent-soft);
+            color: var(--accent);
+        }
+
+        .btn-danger {
+            background: var(--danger-soft);
+            color: var(--danger);
+        }
+
+        .btn-outline {
+            background: #ffffff;
+            border: 1px solid var(--border-soft);
+            color: var(--text-muted);
+        }
+
+        .empty-state {
+            font-size: 13px;
+            color: var(--text-muted);
+            padding: 16px 4px;
         }
 
         .group-row {
-            background: #fff;
-            padding: 10px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            background: var(--card-bg);
+            padding: 10px 12px;
+            border-radius: 10px;
+            margin-bottom: 8px;
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
         }
 
         .group-url-input {
-            width: 75%;
-            padding: 8px;
-            border-radius: 4px;
-            border: 1px solid #ddd;
-            font-size: 13px;
+            flex: 1;
+            padding: 6px 8px;
+            border-radius: 6px;
+            border: 1px solid var(--border-soft);
+            font-size: 12px;
         }
 
         .group-enable-btn {
-            padding: 8px 10px;
-            border-radius: 4px;
-            border: none;
-            cursor: pointer;
-            font-size: 12px;
-            background: #0088cc;
-            color: #fff;
+            min-width: 80px;
         }
 
-        .tg-admin-row {
+        .row-controls {
             display: flex;
             gap: 8px;
             margin-top: 10px;
         }
 
-        .tg-admin-row input {
+        .row-controls input {
             flex: 1;
             padding: 8px;
-            border-radius: 4px;
-            border: 1px solid #ddd;
-        }
-
-        .tg-admin-row button {
-            padding: 8px 12px;
-            border-radius: 4px;
-            border: none;
-            background: #0088cc;
-            color: #fff;
-            cursor: pointer;
+            border-radius: 6px;
+            border: 1px solid var(--border-soft);
             font-size: 13px;
         }
 
+        .row-controls button {
+            white-space: nowrap;
+        }
+
+        .hidden {
+            display: none;
+        }
+
         h3 {
-            margin-top: 0;
-            margin-bottom: 10px;
-            font-size: 16px;
+            font-size: 15px;
+            margin: 0 0 6px 0;
+        }
+
+        #admin-list .group-row {
+            justify-content: space-between;
         }
     </style>
-
 </head>
 <body>
 
 <header>
     <h1>Поиск вакансий</h1>
     <p>Сбор вакансий из Telegram и Facebook</p>
-
-    <!-- ШЕСТЕРЁНКА ДЛЯ НАСТРОЕК -->
-    <div id="settings-gear" onclick="switchTab('settings')" title="Настройки">
-        ⚙️
-    </div>
+    <div id="settings-gear" onclick="switchTab('settings')" title="Настройки">⚙️</div>
 </header>
 
 <nav>
@@ -183,58 +244,51 @@
     <button class="tab" id="archive-tab-btn" onclick="switchTab('archive')">Архив</button>
     <button class="tab" id="channels-tab-btn" onclick="switchTab('channels')">Telegram</button>
     <button class="tab" id="fbgroups-tab-btn" onclick="switchTab('fbgroups')">Facebook</button>
-
-    <!-- Вкладка Настройки (скрывается для юзеров) -->
     <button class="tab" id="settings-tab-btn" onclick="switchTab('settings')">Настройки</button>
 </nav>
 
 <div class="container">
 
-    <!-- TAB 1 — АКТИВНЫЕ ВАКАНСИИ -->
+    <!-- TAB: Активные вакансии -->
     <div id="jobs-tab">
+        <div id="jobs-summary" class="summary"></div>
         <div id="jobs-list"></div>
     </div>
 
-    <!-- TAB 2 — АРХИВ -->
+    <!-- TAB: Архив -->
     <div id="archive-tab" class="hidden">
+        <div id="archive-summary" class="summary"></div>
         <div id="archive-list"></div>
     </div>
 
-    <!-- TAB 3 — ТЕЛЕГРАМ-КАНАЛЫ -->
+    <!-- TAB: Telegram-каналы -->
     <div id="channels-tab" class="hidden">
         <h3>Telegram каналы</h3>
-
         <div id="channels-list"></div>
-
-        <div class="tg-admin-row">
+        <div class="row-controls">
             <input type="text" id="new-channel" placeholder="https://t.me/...">
-            <button onclick="addChannel()">Добавить</button>
+            <button class="btn btn-secondary" onclick="addChannel()">Добавить</button>
         </div>
     </div>
 
-    <!-- TAB 4 — FACEBOOK ГРУППЫ -->
+    <!-- TAB: Facebook группы -->
     <div id="fbgroups-tab" class="hidden">
         <h3>Facebook группы</h3>
-
         <div id="fb-groups-list"></div>
-
-        <div class="tg-admin-row">
+        <div class="row-controls">
             <input type="text" id="new-fb-group" placeholder="https://www.facebook.com/groups/...">
-            <button onclick="addFbGroup()">Добавить</button>
+            <button class="btn btn-secondary" onclick="addFbGroup()">Добавить</button>
         </div>
     </div>
 
-    <!-- TAB 5 — НАСТРОЙКИ -->
+    <!-- TAB: Настройки / доступ -->
     <div id="settings-tab" class="hidden">
         <h3>Управление доступом</h3>
-
         <div id="admin-list"></div>
-
-        <div class="tg-admin-row">
+        <div class="row-controls">
             <input type="text" id="new-admin" placeholder="Telegram ID пользователя">
-            <button onclick="addAdmin()">Добавить</button>
+            <button class="btn btn-secondary" onclick="addAdmin()">Добавить</button>
         </div>
-
     </div>
 
 </div>
@@ -242,15 +296,55 @@
 <script>
 const API_BASE = window.location.origin;
 
-// ----------------------
-// ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК
-// ----------------------
+// --------- утилиты ---------
+function formatRelativeTime(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+
+    const now = new Date();
+    const diffMs = now - d;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHours = Math.floor(diffMin / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffSec < 60) return "только что";
+    if (diffMin < 60) return diffMin + " мин назад";
+    if (diffHours < 24) return diffHours + " ч назад";
+    if (diffDays === 1) return "1 дн назад";
+    if (diffDays < 7) return diffDays + " дн назад";
+    return d.toLocaleDateString("ru-RU");
+}
+
+function detectSourceTag(job) {
+    const src = job.source_name || job.source || "";
+    if (job.url && job.url.includes("t.me")) return "Telegram";
+    if (job.url && job.url.includes("facebook.com")) return "Facebook";
+    if (src) return src;
+    return "Источник";
+}
+
+function buildAuthorLink(senderUsername) {
+    if (!senderUsername) return null;
+    if (senderUsername.startsWith("@")) {
+        return "https://t.me/" + senderUsername.slice(1);
+    }
+    if (senderUsername.startsWith("http://") || senderUsername.startsWith("https://")) {
+        return senderUsername;
+    }
+    return "https://t.me/" + senderUsername;
+}
+
+// --------- табы ---------
 function switchTab(tab) {
     document.querySelectorAll(".tab").forEach(btn => btn.classList.remove("active"));
     document.querySelectorAll(".container > div").forEach(div => div.classList.add("hidden"));
 
-    document.getElementById(`${tab}-tab-btn`).classList.add("active");
-    document.getElementById(`${tab}-tab`).classList.remove("hidden");
+    const tabBtn = document.getElementById(`${tab}-tab-btn`);
+    const tabDiv = document.getElementById(`${tab}-tab`);
+    if (tabBtn) tabBtn.classList.add("active");
+    if (tabDiv) tabDiv.classList.remove("hidden");
 
     if (tab === "jobs") loadJobs();
     if (tab === "archive") loadArchive();
@@ -259,14 +353,38 @@ function switchTab(tab) {
     if (tab === "settings") loadAdmins();
 }
 
-// ----------------------
-// ПРОВЕРКА ДОСТУПА
-// ----------------------
+// --------- инициализация / доступ ---------
 async function initApp() {
-    const res = await fetch(`${API_BASE}/api/check_access`, {method: "POST"});
-    const data = await res.json();
+    let userId = null;
+    let username = null;
 
-    const isAdmin = data.is_admin;
+    try {
+        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe) {
+            const user = window.Telegram.WebApp.initDataUnsafe.user;
+            if (user) {
+                userId = user.id;
+                username = user.username || null;
+            }
+        }
+    } catch (e) {
+        console.log("Telegram WebApp user not available", e);
+    }
+
+    let isAdmin = false;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/check_access`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ user_id: userId, username })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            isAdmin = !!data.is_admin;
+        }
+    } catch (e) {
+        console.error("check_access error", e);
+    }
 
     const settingsTabBtn = document.getElementById("settings-tab-btn");
     const settingsTabDiv = document.getElementById("settings-tab");
@@ -281,99 +399,180 @@ async function initApp() {
     loadJobs();
 }
 
-// ----------------------
-// ВАКАНСИИ
-// ----------------------
+// --------- вакансии ---------
 async function loadJobs() {
-    const res = await fetch(`${API_BASE}/api/jobs?limit=50`);
+    const res = await fetch(`${API_BASE}/api/jobs?limit=100`);
     if (!res.ok) {
-        console.error("Ошибка загрузки вакансий", res.status);
+        console.error("jobs fetch error", res.status);
         return;
     }
     const data = await res.json();
-    const jobs = data.jobs || [];
+    const jobs = data.jobs || data || [];
 
     const list = document.getElementById("jobs-list");
+    const summary = document.getElementById("jobs-summary");
     list.innerHTML = "";
 
     if (!jobs.length) {
-        list.innerHTML = "<p>Пока нет активных вакансий.</p>";
+        summary.textContent = "";
+        list.innerHTML = '<div class="empty-state">Пока нет активных вакансий.</div>';
         return;
     }
 
+    const now = Date.now();
+    let last24 = 0;
     jobs.forEach(job => {
-        const text = job.text || "";
-        const url = job.url || "";
-        const source = job.source_name || job.source || "";
-        const created = job.created_at || "";
+        if (job.received_at) {
+            const t = new Date(job.received_at).getTime();
+            if (!isNaN(t) && now - t <= 24*60*60*1000) last24 += 1;
+        }
+    });
+    summary.textContent = `Всего активных вакансий: ${jobs.length}. За последние 24 часа: ${last24}.`;
+
+    jobs.forEach(job => {
+        const sourceLabel = detectSourceTag(job);
+        const sourceLine = job.url || sourceLabel;
+        const created = formatRelativeTime(job.created_at || job.received_at);
+        const authorLink = buildAuthorLink(job.sender_username);
+        const openText = job.url && job.url.includes("t.me")
+            ? "Открыть в Telegram →"
+            : "Открыть пост →";
+
+        let actionsHtml = `
+            <button class="btn btn-outline" onclick="archiveJob(${job.id})">В архив</button>
+            <button class="btn btn-danger" onclick="deleteJob(${job.id})">Удалить</button>
+        `;
+        if (authorLink) {
+            actionsHtml = `
+                <button class="btn btn-secondary" onclick="window.open('${authorLink}', '_blank')">Написать автору</button>
+                ${actionsHtml}
+            `;
+        }
+
         list.innerHTML += `
-            <div class="job">
-                <div class="job-source">${source}</div>
-                <div class="job-created">${created}</div>
-                <div class="job-text">${text.replace(/\\n/g, "<br>")}</div>
-                ${url ? `<div class="job-link"><a href="${url}" target="_blank">Ссылка</a></div>` : ""}
+            <div class="job-card">
+                <div class="job-source">${sourceLine}</div>
+                <div class="job-meta">${created || ""}</div>
+                <div class="job-text">${(job.text || "").replace(/\\n/g, "<br>")}</div>
+                ${job.url ? `<div class="job-link"><a href="${job.url}" target="_blank">${openText}</a></div>` : ""}
+                <div class="job-actions">
+                    ${actionsHtml}
+                </div>
             </div>
         `;
     });
 }
 
-// ----------------------
-// АРХИВ
-// ----------------------
+// --------- архив ---------
 async function loadArchive() {
-    const res = await fetch(`${API_BASE}/api/jobs/archive?limit=50`);
+    const res = await fetch(`${API_BASE}/api/jobs/archive?limit=100`);
     if (!res.ok) {
-        console.error("Ошибка загрузки архива вакансий", res.status);
+        console.error("archive fetch error", res.status);
         return;
     }
-
     const data = await res.json();
-    const jobs = data.jobs || [];
+    const jobs = data.jobs || data || [];
+
     const list = document.getElementById("archive-list");
+    const summary = document.getElementById("archive-summary");
     list.innerHTML = "";
 
     if (!jobs.length) {
-        list.innerHTML = "<p>Пока нет вакансий в архиве.</p>";
+        summary.textContent = "";
+        list.innerHTML = '<div class="empty-state">В архиве пока ничего нет.</div>';
         return;
     }
 
+    summary.textContent = `Всего в архиве: ${jobs.length}.`;
+
     jobs.forEach(job => {
-        const text = job.text || "";
-        const url = job.url || "";
-        const source = job.source_name || job.source || "";
-        const created = job.created_at || "";
+        const sourceLabel = detectSourceTag(job);
+        const sourceLine = job.url || sourceLabel;
+        const created = formatRelativeTime(job.created_at || job.received_at);
+        const authorLink = buildAuthorLink(job.sender_username);
+        const openText = job.url && job.url.includes("t.me")
+            ? "Открыть в Telegram →"
+            : "Открыть пост →";
+
+        let actionsHtml = `
+            <button class="btn btn-outline" onclick="unarchiveJob(${job.id})">Вернуть из архива</button>
+            <button class="btn btn-danger" onclick="deleteJob(${job.id})">Удалить</button>
+        `;
+        if (authorLink) {
+            actionsHtml = `
+                <button class="btn btn-secondary" onclick="window.open('${authorLink}', '_blank')">Написать автору</button>
+                ${actionsHtml}
+            `;
+        }
+
         list.innerHTML += `
-            <div class="job">
-                <div class="job-source">${source}</div>
-                <div class="job-created">${created}</div>
-                <div class="job-text">${text.replace(/\\n/g, "<br>")}</div>
-                ${url ? `<div class="job-link"><a href="${url}" target="_blank">Ссылка</a></div>` : ""}
+            <div class="job-card">
+                <div class="job-source">${sourceLine}</div>
+                <div class="job-meta">${created || ""}</div>
+                <div class="job-text">${(job.text || "").replace(/\\n/g, "<br>")}</div>
+                ${job.url ? `<div class="job-link"><a href="${job.url}" target="_blank">${openText}</a></div>` : ""}
+                <div class="job-actions">
+                    ${actionsHtml}
+                </div>
             </div>
         `;
     });
 }
 
-// ----------------------
-// TELEGRAM-КАНАЛЫ
-// ----------------------
+// --------- действия с вакансиями ---------
+async function archiveJob(id) {
+    try {
+        await fetch(`${API_BASE}/api/jobs/${id}/archive`, { method: "POST" });
+        loadJobs();
+    } catch (e) {
+        console.error("archiveJob error", e);
+    }
+}
+
+async function unarchiveJob(id) {
+    try {
+        await fetch(`${API_BASE}/api/jobs/${id}/unarchive`, { method: "POST" });
+        loadArchive();
+    } catch (e) {
+        console.error("unarchiveJob error", e);
+    }
+}
+
+async function deleteJob(id) {
+    if (!confirm("Удалить вакансию?")) return;
+    try {
+        await fetch(`${API_BASE}/api/jobs/${id}`, { method: "DELETE" });
+        loadJobs();
+        loadArchive();
+    } catch (e) {
+        console.error("deleteJob error", e);
+    }
+}
+
+// --------- Telegram-каналы ---------
 async function loadChannels() {
     const res = await fetch(`${API_BASE}/api/channels`);
     if (!res.ok) {
-        console.error("Ошибка загрузки каналов", res.status);
+        console.error("channels fetch error", res.status);
         return;
     }
     const data = await res.json();
-    const channels = data.channels || [];
+    const channels = data.channels || data || [];
 
     const list = document.getElementById("channels-list");
     list.innerHTML = "";
 
+    if (!channels.length) {
+        list.innerHTML = '<div class="empty-state">Пока нет подключённых Telegram-каналов.</div>';
+        return;
+    }
+
     channels.forEach(ch => {
-        const username = ch.username || ch.group_id || "";
+        const id = ch.group_id || ch.username || ch.url;
         list.innerHTML += `
             <div class="group-row">
-                <input class="group-url-input" value="${username}" readonly>
-                <button class="group-enable-btn" onclick="toggleChannel('${username}', ${ch.enabled ? "false" : "true"})">
+                <input class="group-url-input" value="${id}" readonly>
+                <button class="btn btn-outline group-enable-btn" onclick="toggleChannel('${id}', ${ch.enabled ? "false" : "true"})">
                     ${ch.enabled ? "Отключить" : "Включить"}
                 </button>
             </div>
@@ -381,11 +580,11 @@ async function loadChannels() {
     });
 }
 
-async function toggleChannel(username, enabled) {
+async function toggleChannel(groupId, enabled) {
     await fetch(`${API_BASE}/api/source/toggle`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({group_id: username, enabled})
+        body: JSON.stringify({ group_id: groupId, enabled })
     });
     loadChannels();
 }
@@ -397,34 +596,37 @@ async function addChannel() {
     await fetch(`${API_BASE}/api/source`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({group_id: url, group_name: url})
+        body: JSON.stringify({ group_id: url, group_name: url })
     });
 
     document.getElementById("new-channel").value = "";
     loadChannels();
 }
 
-// ----------------------
-// FACEBOOK ГРУППЫ
-// ----------------------
+// --------- Facebook-группы ---------
 async function loadFbGroups() {
     const res = await fetch(`${API_BASE}/api/fb_groups`);
     if (!res.ok) {
-        console.error("Ошибка загрузки FB-групп", res.status);
+        console.error("fb_groups fetch error", res.status);
         return;
     }
     const data = await res.json();
-    const groups = data.groups || [];
+    const groups = data.groups || data || [];
 
     const list = document.getElementById("fb-groups-list");
     list.innerHTML = "";
+
+    if (!groups.length) {
+        list.innerHTML = '<div class="empty-state">Пока нет подключённых Facebook-групп.</div>';
+        return;
+    }
 
     groups.forEach(g => {
         const url = g.group_url || g.group_id || "";
         list.innerHTML += `
             <div class="group-row">
                 <input class="group-url-input" value="${url}" readonly>
-                <button class="group-enable-btn" onclick="toggleFbGroup('${url}', ${g.enabled ? "false" : "true"})">
+                <button class="btn btn-outline group-enable-btn" onclick="toggleFbGroup('${url}', ${g.enabled ? "false" : "true"})">
                     ${g.enabled ? "Отключить" : "Включить"}
                 </button>
             </div>
@@ -436,7 +638,7 @@ async function toggleFbGroup(url, enabled) {
     await fetch(`${API_BASE}/api/source/toggle`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({group_id: url, enabled})
+        body: JSON.stringify({ group_id: url, enabled })
     });
     loadFbGroups();
 }
@@ -448,28 +650,35 @@ async function addFbGroup() {
     await fetch(`${API_BASE}/api/source`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({group_id: url, group_name: url})
+        body: JSON.stringify({ group_id: url, group_name: url })
     });
 
     document.getElementById("new-fb-group").value = "";
     loadFbGroups();
 }
 
-// ----------------------
-// АДМИНЫ
-// ----------------------
+// --------- админы ---------
 async function loadAdmins() {
     const res = await fetch(`${API_BASE}/api/admins`);
+    if (!res.ok) {
+        console.error("admins fetch error", res.status);
+        return;
+    }
     const admins = await res.json();
 
     const list = document.getElementById("admin-list");
     list.innerHTML = "";
 
+    if (!admins.length) {
+        list.innerHTML = '<div class="empty-state">Админов пока нет.</div>';
+        return;
+    }
+
     admins.forEach(a => {
         list.innerHTML += `
             <div class="group-row">
                 <div>${a.user_id}</div>
-                <button onclick="removeAdmin(${a.id})">Удалить</button>
+                <button class="btn btn-danger" onclick="removeAdmin(${a.id})">Удалить</button>
             </div>
         `;
     });
@@ -482,7 +691,7 @@ async function addAdmin() {
     await fetch(`${API_BASE}/api/admins`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({user_id: id})
+        body: JSON.stringify({ user_id: id })
     });
 
     document.getElementById("new-admin").value = "";
@@ -490,12 +699,11 @@ async function addAdmin() {
 }
 
 async function removeAdmin(id) {
-    await fetch(`${API_BASE}/api/admins/${id}`, {method: "DELETE"});
+    await fetch(`${API_BASE}/api/admins/${id}`, { method: "DELETE" });
     loadAdmins();
 }
 
-// ----------------------
-initApp();
+document.addEventListener("DOMContentLoaded", initApp);
 </script>
 
 </body>
