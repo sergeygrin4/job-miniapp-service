@@ -351,35 +351,49 @@ async function initApp() {
     let userId = null;
     let username = null;
 
+    // Пытаемся достать юзера из Telegram WebApp
     try {
         const telegram = window.Telegram?.WebApp?.initDataUnsafe;
         if (telegram?.user) {
             userId = telegram.user.id;
             username = telegram.user.username || null;
         }
-    } catch {}
+    } catch (e) {
+        console.log("Telegram WebApp user not available", e);
+    }
 
     let isAdmin = false;
 
+    // Спрашиваем у бэка, админ ли это
     try {
         const res = await fetch(`${API_BASE}/api/check_access`, {
             method: "POST",
             headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({user_id: userId, username})
+            body: JSON.stringify({ user_id: userId, username })
         });
-
         if (res.ok) {
             const data = await res.json();
-            isAdmin = data.is_admin;
+            isAdmin = !!data.is_admin;
         }
-    } catch {}
-
-    if (!isAdmin) {
-        document.getElementById("settings-tab-btn").style.display = "none";
-        document.getElementById("settings-tab").style.display = "none";
-        document.getElementById("settings-gear").style.display = "none";
+    } catch (e) {
+        console.error("check_access error", e);
     }
 
+    const settingsTabBtn = document.getElementById("settings-tab-btn");
+    const settingsTabDiv = document.getElementById("settings-tab");
+    const settingsGear   = document.getElementById("settings-gear");
+
+    // 🔒 Текстовую вкладку "Настройки" прячем всегда,
+    // чтобы доступ был только через шестерёнку
+    if (settingsTabBtn) settingsTabBtn.style.display = "none";
+
+    // Для НЕ-админов прячем и шестерёнку, и сам блок настроек
+    if (!isAdmin) {
+        if (settingsTabDiv) settingsTabDiv.style.display = "none";
+        if (settingsGear) settingsGear.style.display = "none";
+    }
+
+    // Стартуем с вкладки "Активные вакансии"
     loadJobs();
 }
 
