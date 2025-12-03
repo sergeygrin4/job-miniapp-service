@@ -226,6 +226,14 @@ def healthz():
 
 @app.route("/api/check_access", methods=["POST"])
 def check_access():
+    """
+    Принимает user_id и username из Telegram WebApp и говорит, можно ли пускать пользователя.
+    Ожидаем тело:
+    {
+      "user_id": 123456789,
+      "username": "DemySkWear"
+    }
+    """
     data = request.get_json(silent=True) or {}
     user_id_raw = data.get("user_id")
     username_raw = data.get("username")  # может быть None
@@ -243,8 +251,16 @@ def check_access():
         ADMINS,
     )
 
+    # Аккуратно приводим user_id к int (если он есть)
+    user_id_int: Optional[int] = None
+    try:
+        if user_id_raw is not None:
+            user_id_int = int(user_id_raw)
+    except (TypeError, ValueError):
+        user_id_int = None
+
+    # Если юзер допущен и есть нормальный username — сохраняем/обновляем его в allowed_users
     if allowed and username_norm:
-        ...
         upsert_allowed_user(username_norm, user_id_int)
 
     return jsonify(
@@ -256,6 +272,7 @@ def check_access():
             "user_id": user_id_raw,
         }
     )
+
 
 
 
