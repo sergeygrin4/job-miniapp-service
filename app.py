@@ -924,10 +924,7 @@ def delete_job(job_id: int):
     try:
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute(
-            "DELETE FROM jobs WHERE id = %s",
-            (job_id,),
-        )
+        cur.execute("DELETE FROM jobs WHERE id = %s", (job_id,))
         deleted = cur.rowcount
         conn.commit()
         conn.close()
