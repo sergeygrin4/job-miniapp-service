@@ -226,13 +226,6 @@ def healthz():
 
 @app.route("/api/check_access", methods=["POST"])
 def check_access():
-    """
-    Принимает user_id и username из Telegram WebApp и говорит, можно ли пускать пользователя.
-    {
-      "user_id": 123456789,
-      "username": "opsifd"
-    }
-    """
     data = request.get_json(silent=True) or {}
     user_id_raw = data.get("user_id")
     username_raw = data.get("username")  # может быть None
@@ -241,21 +234,29 @@ def check_access():
     allowed = is_user_allowed(username_norm)
     admin_flag = is_admin(username_norm)
 
-    # если пользователь нам известен и у него есть user_id, обновляем в БД
-    if allowed and user_id_raw is not None and username_norm:
-        try:
-            user_id_int = int(user_id_raw)
-        except (TypeError, ValueError):
-            user_id_int = None
-        if user_id_int is not None:
-            upsert_allowed_user(username_norm, user_id_int)
+    logger.info(
+        "check_access: username_raw=%r norm=%r allowed=%s admin=%s ADMINS=%r",
+        username_raw,
+        username_norm,
+        allowed,
+        admin_flag,
+        ADMINS,
+    )
+
+    if allowed and username_norm:
+        ...
+        upsert_allowed_user(username_norm, user_id_int)
 
     return jsonify(
         {
             "allowed": allowed,
             "is_admin": admin_flag,
+            "username": username_raw,
+            "normalized_username": username_norm,
+            "user_id": user_id_raw,
         }
     )
+
 
 
 # ---------------- Telegram уведомления (для парсеров) ----------------
@@ -751,7 +752,7 @@ def delete_allowed_user(allowed_id: int):
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs():
     """
-    Возвращает последние N вакансий.
+    Возвращает последние N НЕархивных вакансий.
     Параметры:
       - limit (int, по умолчанию 50)
     """
@@ -764,12 +765,23 @@ def list_jobs():
 
     try:
         conn = get_conn()
+        # cursor_factory уже DictCursor в get_conn()
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, source, source_name, external_id, url, text, sender_username,
-                   created_at, received_at, archived, archived_at
+            SELECT id,
+                   source,
+                   source_name,
+                   external_id,
+                   url,
+                   text,
+                   sender_username,
+                   created_at,
+                   received_at,
+                   archived,
+                   archived_at
             FROM jobs
+            WHERE archived = FALSE
             ORDER BY received_at DESC
             LIMIT %s
             """,
@@ -800,6 +812,7 @@ def list_jobs():
         )
 
     return jsonify({"jobs": jobs})
+
 
 
 @app.route("/api/jobs/archive", methods=["GET"])
