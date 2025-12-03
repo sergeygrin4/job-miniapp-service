@@ -326,6 +326,24 @@ function authorLink(sender) {
     if (sender.startsWith("@")) return "https://t.me/" + sender.slice(1);
     return "https://t.me/" + sender;
 }
+function openJobUrl(url) {
+    const tg = window.Telegram && window.Telegram.WebApp;
+
+    // Для t.me лучше использовать спец-метод Telegram
+    if (tg && url && url.startsWith("https://t.me/")) {
+        try {
+            tg.openTelegramLink(url);
+            return;
+        } catch (e) {
+            console.error("openTelegramLink failed, fallback to window.open", e);
+        }
+    }
+
+    // Для всего остального — обычное открытие в браузере
+    if (url) {
+        window.open(url, "_blank");
+    }
+}
 
 // ---------------------
 // Tabs
@@ -459,6 +477,9 @@ function renderJobCard(job, list, archived) {
         ? "Открыть в Telegram →"
         : "Открыть пост →";
 
+    // Чтобы безопасно вставить URL в onclick, экранируем одинарные кавычки
+    const safeUrl = job.url ? job.url.replace(/'/g, "\\'") : "";
+
     let actions = `
         ${author ? `<button class="btn btn-secondary" onclick="window.open('${author}', '_blank')">Написать автору</button>` : ""}
         ${archived
@@ -471,12 +492,20 @@ function renderJobCard(job, list, archived) {
         <div class="job-card">
             <div class="job-source">${job.url || source}</div>
             <div class="job-meta">${created}</div>
-            <div class="job-text">${(job.text || "").replace(/\n/g, "<br>")}</div>
-            ${job.url ? `<div class="job-link"><a href="${job.url}" target="_blank">${openText}</a></div>` : ""}
+            <div class="job-text">${(job.text || "").replace(/\\n/g, "<br>")}</div>
+            ${job.url
+                ? `<div class="job-link">
+                        <a href="#" onclick="openJobUrl('${safeUrl}'); return false;">
+                            ${openText}
+                        </a>
+                   </div>`
+                : ""
+            }
             <div class="job-actions">${actions}</div>
         </div>
     `;
 }
+
 
 // --------- Job actions
 async function archiveJob(id) {
