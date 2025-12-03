@@ -14,12 +14,11 @@
         }
 
         header {
-            background: #0088cc;
-            color: #fff;
-            padding: 10px 15px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+            background: #fff;
+            padding: 10px 0;
+            text-align: center;
+            border-bottom: 1px solid #ddd;
+            position: relative;
         }
 
         header h1 {
@@ -27,9 +26,20 @@
             font-size: 18px;
         }
 
+        header p {
+            margin: 4px 0 0 0;
+            font-size: 12px;
+            color: #666;
+        }
+
         #settings-gear {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            font-size: 24px;
             cursor: pointer;
-            font-size: 18px;
+            opacity: 0.75;
+            user-select: none;
         }
 
         nav {
@@ -53,42 +63,42 @@
         }
 
         .container {
-            padding: 10px;
+            padding: 20px;
         }
 
-        .job-card {
-            background: #fff;
-            border-radius: 6px;
-            padding: 10px;
+        .job {
+            background: white;
+            padding: 15px;
             margin-bottom: 10px;
-            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
 
-        .job-header {
-            display: flex;
-            justify-content: space-between;
+        .job-source {
             font-size: 12px;
             color: #555;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
         }
 
-        .job-body {
+        .job-created {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 8px;
+        }
+
+        .job-text {
             font-size: 14px;
+            margin-bottom: 8px;
             white-space: pre-wrap;
         }
 
-        .job-footer {
-            margin-top: 8px;
-            font-size: 12px;
-            color: #0077aa;
-        }
-
-        .job-footer a {
-            color: #0077aa;
+        .job-link a {
+            font-size: 13px;
+            color: #0088cc;
             text-decoration: none;
         }
 
-        .job-footer a:hover {
+        .job-link a:hover {
             text-decoration: underline;
         }
 
@@ -97,45 +107,61 @@
         }
 
         .group-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
             background: #fff;
-            border: 1px solid #ddd;
-            border-radius: 6px;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .group-url-input {
+            width: 75%;
             padding: 8px;
-            margin-bottom: 6px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-size: 13px;
         }
 
-        .group-row input {
-            flex: 1;
+        .group-enable-btn {
+            padding: 8px 10px;
+            border-radius: 4px;
             border: none;
-            background: transparent;
-            font-size: 14px;
-        }
-
-        .group-row button {
-            margin-left: 8px;
-            padding: 6px 10px;
-            font-size: 12px;
             cursor: pointer;
+            font-size: 12px;
+            background: #0088cc;
+            color: #fff;
         }
 
         .tg-admin-row {
             display: flex;
-            margin-top: 10px;
             gap: 8px;
+            margin-top: 10px;
         }
 
         .tg-admin-row input {
             flex: 1;
-            padding: 6px;
+            padding: 8px;
             border-radius: 4px;
-            border: 1px solid #ccc;
+            border: 1px solid #ddd;
         }
 
         .tg-admin-row button {
-            padding: 8px 14px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: none;
+            background: #0088cc;
+            color: #fff;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 16px;
         }
     </style>
 
@@ -144,6 +170,7 @@
 
 <header>
     <h1>Поиск вакансий</h1>
+    <p>Сбор вакансий из Telegram и Facebook</p>
 
     <!-- ШЕСТЕРЁНКА ДЛЯ НАСТРОЕК -->
     <div id="settings-gear" onclick="switchTab('settings')" title="Настройки">
@@ -156,6 +183,9 @@
     <button class="tab" id="archive-tab-btn" onclick="switchTab('archive')">Архив</button>
     <button class="tab" id="channels-tab-btn" onclick="switchTab('channels')">Telegram</button>
     <button class="tab" id="fbgroups-tab-btn" onclick="switchTab('fbgroups')">Facebook</button>
+
+    <!-- Вкладка Настройки (скрывается для юзеров) -->
+    <button class="tab" id="settings-tab-btn" onclick="switchTab('settings')">Настройки</button>
 </nav>
 
 <div class="container">
@@ -172,7 +202,7 @@
 
     <!-- TAB 3 — ТЕЛЕГРАМ-КАНАЛЫ -->
     <div id="channels-tab" class="hidden">
-        <h3>Telegram-каналы</h3>
+        <h3>Telegram каналы</h3>
 
         <div id="channels-list"></div>
 
@@ -219,15 +249,8 @@ function switchTab(tab) {
     document.querySelectorAll(".tab").forEach(btn => btn.classList.remove("active"));
     document.querySelectorAll(".container > div").forEach(div => div.classList.add("hidden"));
 
-    const tabBtn = document.getElementById(`${tab}-tab-btn`);
-    if (tabBtn) {
-        tabBtn.classList.add("active");
-    }
-
-    const tabDiv = document.getElementById(`${tab}-tab`);
-    if (tabDiv) {
-        tabDiv.classList.remove("hidden");
-    }
+    document.getElementById(`${tab}-tab-btn`).classList.add("active");
+    document.getElementById(`${tab}-tab`).classList.remove("hidden");
 
     if (tab === "jobs") loadJobs();
     if (tab === "archive") loadArchive();
@@ -259,11 +282,16 @@ async function initApp() {
 }
 
 // ----------------------
-// ЗАГРУЗКА ВАКАНСИЙ
+// ВАКАНСИИ
 // ----------------------
 async function loadJobs() {
     const res = await fetch(`${API_BASE}/api/jobs?limit=50`);
-    const jobs = await res.json();
+    if (!res.ok) {
+        console.error("Ошибка загрузки вакансий", res.status);
+        return;
+    }
+    const data = await res.json();
+    const jobs = data.jobs || [];
 
     const list = document.getElementById("jobs-list");
     list.innerHTML = "";
@@ -274,28 +302,33 @@ async function loadJobs() {
     }
 
     jobs.forEach(job => {
+        const text = job.text || "";
+        const url = job.url || "";
+        const source = job.source_name || job.source || "";
+        const created = job.created_at || "";
         list.innerHTML += `
-            <div class="job-card">
-                <div class="job-header">
-                    <span>${job.source_name || job.source}</span>
-                    <span>${job.created_at || ""}</span>
-                </div>
-                <div class="job-body">${(job.text || "").substring(0, 500)}${job.text && job.text.length > 500 ? "..." : ""}</div>
-                <div class="job-footer">
-                    ${job.url ? `<a href="${job.url}" target="_blank">Открыть пост</a>` : ""}
-                </div>
+            <div class="job">
+                <div class="job-source">${source}</div>
+                <div class="job-created">${created}</div>
+                <div class="job-text">${text.replace(/\\n/g, "<br>")}</div>
+                ${url ? `<div class="job-link"><a href="${url}" target="_blank">Ссылка</a></div>` : ""}
             </div>
         `;
     });
 }
 
 // ----------------------
-// АРХИВ ВАКАНСИЙ
+// АРХИВ
 // ----------------------
 async function loadArchive() {
     const res = await fetch(`${API_BASE}/api/jobs/archive?limit=50`);
-    const jobs = await res.json();
+    if (!res.ok) {
+        console.error("Ошибка загрузки архива вакансий", res.status);
+        return;
+    }
 
+    const data = await res.json();
+    const jobs = data.jobs || [];
     const list = document.getElementById("archive-list");
     list.innerHTML = "";
 
@@ -305,16 +338,16 @@ async function loadArchive() {
     }
 
     jobs.forEach(job => {
+        const text = job.text || "";
+        const url = job.url || "";
+        const source = job.source_name || job.source || "";
+        const created = job.created_at || "";
         list.innerHTML += `
-            <div class="job-card">
-                <div class="job-header">
-                    <span>${job.source_name || job.source}</span>
-                    <span>${job.created_at || ""}</span>
-                </div>
-                <div class="job-body">${(job.text || "").substring(0, 500)}${job.text && job.text.length > 500 ? "..." : ""}</div>
-                <div class="job-footer">
-                    ${job.url ? `<a href="${job.url}" target="_blank">Открыть пост</a>` : ""}
-                </div>
+            <div class="job">
+                <div class="job-source">${source}</div>
+                <div class="job-created">${created}</div>
+                <div class="job-text">${text.replace(/\\n/g, "<br>")}</div>
+                ${url ? `<div class="job-link"><a href="${url}" target="_blank">Ссылка</a></div>` : ""}
             </div>
         `;
     });
@@ -325,6 +358,10 @@ async function loadArchive() {
 // ----------------------
 async function loadChannels() {
     const res = await fetch(`${API_BASE}/api/channels`);
+    if (!res.ok) {
+        console.error("Ошибка загрузки каналов", res.status);
+        return;
+    }
     const data = await res.json();
     const channels = data.channels || [];
 
@@ -372,6 +409,10 @@ async function addChannel() {
 // ----------------------
 async function loadFbGroups() {
     const res = await fetch(`${API_BASE}/api/fb_groups`);
+    if (!res.ok) {
+        console.error("Ошибка загрузки FB-групп", res.status);
+        return;
+    }
     const data = await res.json();
     const groups = data.groups || [];
 
@@ -424,11 +465,6 @@ async function loadAdmins() {
     const list = document.getElementById("admin-list");
     list.innerHTML = "";
 
-    if (!admins.length) {
-        list.innerHTML = "<p>Админов пока нет.</p>";
-        return;
-    }
-
     admins.forEach(a => {
         list.innerHTML += `
             <div class="group-row">
@@ -458,7 +494,8 @@ async function removeAdmin(id) {
     loadAdmins();
 }
 
-document.addEventListener("DOMContentLoaded", initApp);
+// ----------------------
+initApp();
 </script>
 
 </body>
