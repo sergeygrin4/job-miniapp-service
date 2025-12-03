@@ -14,59 +14,82 @@
         }
 
         header {
-            background: #fff;
-            padding: 10px 0;
-            text-align: center;
-            border-bottom: 1px solid #ddd;
-            position: relative;
+            background: #0088cc;
+            color: #fff;
+            padding: 10px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 18px;
         }
 
         #settings-gear {
-            position: absolute;
-            top: 12px;
-            right: 16px;
-            font-size: 24px;
             cursor: pointer;
-            opacity: 0.75;
-            user-select: none;
-        }
-
-        #settings-gear:hover {
-            opacity: 1;
+            font-size: 18px;
         }
 
         nav {
             display: flex;
-            justify-content: center;
-            gap: 10px;
-            padding: 10px;
             background: #fff;
             border-bottom: 1px solid #ddd;
         }
 
-        .tab {
-            padding: 8px 16px;
+        nav button {
+            flex: 1;
+            padding: 10px;
             border: none;
+            background: #fff;
             cursor: pointer;
-            background: #eee;
-            border-radius: 6px;
+            font-size: 14px;
         }
 
-        .tab.active {
-            background: #007bff;
-            color: white;
+        nav button.active {
+            border-bottom: 3px solid #0088cc;
+            font-weight: bold;
         }
 
         .container {
-            padding: 20px;
+            padding: 10px;
         }
 
-        .job {
-            background: white;
-            padding: 15px;
+        .job-card {
+            background: #fff;
+            border-radius: 6px;
+            padding: 10px;
             margin-bottom: 10px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            border: 1px solid #ddd;
+        }
+
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #555;
+            margin-bottom: 6px;
+        }
+
+        .job-body {
+            font-size: 14px;
+            white-space: pre-wrap;
+        }
+
+        .job-footer {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #0077aa;
+        }
+
+        .job-footer a {
+            color: #0077aa;
+            text-decoration: none;
+        }
+
+        .job-footer a:hover {
+            text-decoration: underline;
         }
 
         .hidden {
@@ -74,35 +97,41 @@
         }
 
         .group-row {
-            background: #fff;
-            padding: 10px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             display: flex;
-            justify-content: space-between;
             align-items: center;
-        }
-
-        .group-url-input {
-            width: 75%;
+            justify-content: space-between;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
             padding: 8px;
+            margin-bottom: 6px;
         }
 
-        .group-enable-btn {
-            padding: 8px 12px;
+        .group-row input {
+            flex: 1;
+            border: none;
+            background: transparent;
+            font-size: 14px;
+        }
+
+        .group-row button {
+            margin-left: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
             cursor: pointer;
         }
 
         .tg-admin-row {
-            margin-bottom: 15px;
             display: flex;
-            gap: 10px;
+            margin-top: 10px;
+            gap: 8px;
         }
 
         .tg-admin-row input {
             flex: 1;
-            padding: 8px;
+            padding: 6px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
         }
 
         .tg-admin-row button {
@@ -127,9 +156,6 @@
     <button class="tab" id="archive-tab-btn" onclick="switchTab('archive')">Архив</button>
     <button class="tab" id="channels-tab-btn" onclick="switchTab('channels')">Telegram</button>
     <button class="tab" id="fbgroups-tab-btn" onclick="switchTab('fbgroups')">Facebook</button>
-
-    <!-- Вкладка Настройки (скрывается для юзеров) -->
-    <button class="tab" id="settings-tab-btn" onclick="switchTab('settings')">Настройки</button>
 </nav>
 
 <div class="container">
@@ -146,7 +172,7 @@
 
     <!-- TAB 3 — ТЕЛЕГРАМ-КАНАЛЫ -->
     <div id="channels-tab" class="hidden">
-        <h3>Telegram каналы</h3>
+        <h3>Telegram-каналы</h3>
 
         <div id="channels-list"></div>
 
@@ -193,8 +219,15 @@ function switchTab(tab) {
     document.querySelectorAll(".tab").forEach(btn => btn.classList.remove("active"));
     document.querySelectorAll(".container > div").forEach(div => div.classList.add("hidden"));
 
-    document.getElementById(`${tab}-tab-btn`).classList.add("active");
-    document.getElementById(`${tab}-tab`).classList.remove("hidden");
+    const tabBtn = document.getElementById(`${tab}-tab-btn`);
+    if (tabBtn) {
+        tabBtn.classList.add("active");
+    }
+
+    const tabDiv = document.getElementById(`${tab}-tab`);
+    if (tabDiv) {
+        tabDiv.classList.remove("hidden");
+    }
 
     if (tab === "jobs") loadJobs();
     if (tab === "archive") loadArchive();
@@ -230,57 +263,80 @@ async function initApp() {
 // ----------------------
 async function loadJobs() {
     const res = await fetch(`${API_BASE}/api/jobs?limit=50`);
-    const data = await res.json();
+    const jobs = await res.json();
 
     const list = document.getElementById("jobs-list");
     list.innerHTML = "";
 
-    data.forEach(job => {
+    if (!jobs.length) {
+        list.innerHTML = "<p>Пока нет активных вакансий.</p>";
+        return;
+    }
+
+    jobs.forEach(job => {
         list.innerHTML += `
-            <div class="job">
-                <div>${job.text}</div>
-                <a href="${job.url}" target="_blank">Ссылка</a>
+            <div class="job-card">
+                <div class="job-header">
+                    <span>${job.source_name || job.source}</span>
+                    <span>${job.created_at || ""}</span>
+                </div>
+                <div class="job-body">${(job.text || "").substring(0, 500)}${job.text && job.text.length > 500 ? "..." : ""}</div>
+                <div class="job-footer">
+                    ${job.url ? `<a href="${job.url}" target="_blank">Открыть пост</a>` : ""}
+                </div>
             </div>
         `;
     });
 }
 
 // ----------------------
-// АРХИВ
+// АРХИВ ВАКАНСИЙ
 // ----------------------
 async function loadArchive() {
     const res = await fetch(`${API_BASE}/api/jobs/archive?limit=50`);
-    if (res.status !== 200) return;
+    const jobs = await res.json();
 
-    const data = await res.json();
     const list = document.getElementById("archive-list");
     list.innerHTML = "";
 
-    data.forEach(job => {
+    if (!jobs.length) {
+        list.innerHTML = "<p>Пока нет вакансий в архиве.</p>";
+        return;
+    }
+
+    jobs.forEach(job => {
         list.innerHTML += `
-            <div class="job">
-                <div>${job.text}</div>
-                <a href="${job.url}" target="_blank">Ссылка</a>
+            <div class="job-card">
+                <div class="job-header">
+                    <span>${job.source_name || job.source}</span>
+                    <span>${job.created_at || ""}</span>
+                </div>
+                <div class="job-body">${(job.text || "").substring(0, 500)}${job.text && job.text.length > 500 ? "..." : ""}</div>
+                <div class="job-footer">
+                    ${job.url ? `<a href="${job.url}" target="_blank">Открыть пост</a>` : ""}
+                </div>
             </div>
         `;
     });
 }
 
 // ----------------------
-// TELEGRAM КАНАЛЫ
+// TELEGRAM-КАНАЛЫ
 // ----------------------
 async function loadChannels() {
     const res = await fetch(`${API_BASE}/api/channels`);
-    const channels = await res.json();
+    const data = await res.json();
+    const channels = data.channels || [];
 
     const list = document.getElementById("channels-list");
     list.innerHTML = "";
 
     channels.forEach(ch => {
+        const username = ch.username || ch.group_id || "";
         list.innerHTML += `
             <div class="group-row">
-                <input class="group-url-input" value="${ch.url}" readonly>
-                <button class="group-enable-btn" onclick="toggleChannel(${ch.id})">
+                <input class="group-url-input" value="${username}" readonly>
+                <button class="group-enable-btn" onclick="toggleChannel('${username}', ${ch.enabled ? "false" : "true"})">
                     ${ch.enabled ? "Отключить" : "Включить"}
                 </button>
             </div>
@@ -288,8 +344,12 @@ async function loadChannels() {
     });
 }
 
-async function toggleChannel(id) {
-    await fetch(`${API_BASE}/api/channels/${id}/toggle`, {method: "POST"});
+async function toggleChannel(username, enabled) {
+    await fetch(`${API_BASE}/api/source/toggle`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({group_id: username, enabled})
+    });
     loadChannels();
 }
 
@@ -297,10 +357,10 @@ async function addChannel() {
     const url = document.getElementById("new-channel").value.trim();
     if (!url) return;
 
-    await fetch(`${API_BASE}/api/channels`, {
+    await fetch(`${API_BASE}/api/source`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({url})
+        body: JSON.stringify({group_id: url, group_name: url})
     });
 
     document.getElementById("new-channel").value = "";
@@ -312,16 +372,18 @@ async function addChannel() {
 // ----------------------
 async function loadFbGroups() {
     const res = await fetch(`${API_BASE}/api/fb_groups`);
-    const groups = await res.json();
+    const data = await res.json();
+    const groups = data.groups || [];
 
     const list = document.getElementById("fb-groups-list");
     list.innerHTML = "";
 
     groups.forEach(g => {
+        const url = g.group_url || g.group_id || "";
         list.innerHTML += `
             <div class="group-row">
-                <input class="group-url-input" value="${g.group_id}" readonly>
-                <button class="group-enable-btn" onclick="toggleFbGroup(${g.id})">
+                <input class="group-url-input" value="${url}" readonly>
+                <button class="group-enable-btn" onclick="toggleFbGroup('${url}', ${g.enabled ? "false" : "true"})">
                     ${g.enabled ? "Отключить" : "Включить"}
                 </button>
             </div>
@@ -329,8 +391,12 @@ async function loadFbGroups() {
     });
 }
 
-async function toggleFbGroup(id) {
-    await fetch(`${API_BASE}/api/fb_groups/${id}/toggle`, {method: "POST"});
+async function toggleFbGroup(url, enabled) {
+    await fetch(`${API_BASE}/api/source/toggle`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({group_id: url, enabled})
+    });
     loadFbGroups();
 }
 
@@ -338,10 +404,10 @@ async function addFbGroup() {
     const url = document.getElementById("new-fb-group").value.trim();
     if (!url) return;
 
-    await fetch(`${API_BASE}/api/fb_groups`, {
+    await fetch(`${API_BASE}/api/source`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({url})
+        body: JSON.stringify({group_id: url, group_name: url})
     });
 
     document.getElementById("new-fb-group").value = "";
@@ -357,6 +423,11 @@ async function loadAdmins() {
 
     const list = document.getElementById("admin-list");
     list.innerHTML = "";
+
+    if (!admins.length) {
+        list.innerHTML = "<p>Админов пока нет.</p>";
+        return;
+    }
 
     admins.forEach(a => {
         list.innerHTML += `
@@ -387,8 +458,7 @@ async function removeAdmin(id) {
     loadAdmins();
 }
 
-// ----------------------
-initApp();
+document.addEventListener("DOMContentLoaded", initApp);
 </script>
 
 </body>
