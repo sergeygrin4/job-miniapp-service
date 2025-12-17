@@ -358,6 +358,35 @@ def send_notifications_to_users(text: str, link: Optional[str], chat_title: Opti
             logger.error("Ошибка отправки уведомления пользователю %s: %s", user_id, e)
 
 
+def send_alert_human(text: str):
+    """
+    Дублирует системные ошибки в Telegram-чат
+    """
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not TELEGRAM_BOT_TOKEN:
+        logger.error("Нет TELEGRAM_BOT_TOKEN — алерт не отправлен")
+        return
+
+    user_ids = load_allowed_user_ids_from_db()
+    if not user_ids:
+        return
+
+    for user_id in user_ids:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": user_id,
+                    "text": f"🚨 СИСТЕМНОЕ УВЕДОМЛЕНИЕ\n\n{text}",
+                    "disable_web_page_preview": True,
+                },
+                timeout=10,
+            )
+        except Exception as e:
+            logger.error("Ошибка отправки алерта: %s", e)
+
+
+
 # ---------------- Список каналов (Telegram) ----------------
 
 
