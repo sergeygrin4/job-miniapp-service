@@ -221,6 +221,48 @@ def healthz():
     return jsonify({"status": "ok"})
 
 
+# ---------------- Системные алерты от парсеров (TG/FB) ----------------
+
+
+@app.route("/api/alert", methods=["POST"])
+def api_alert():
+    """
+    Эндпоинт для системных уведомлений от парсеров.
+
+    Авторизация:
+      - Заголовок X-API-KEY == API_SECRET (если API_SECRET задан)
+      - Для обратной совместимости также принимаем X-API-SECRET
+
+    Тело JSON:
+    {
+      "source": "tg_parser" | "fb_parser" | "...",
+      "message": "..."
+    }
+    """
+    if API_SECRET:
+        key = request.headers.get("X-API-KEY")
+        legacy = request.headers.get("X-API-SECRET")
+        if key != API_SECRET and legacy != API_SECRET:
+            return jsonify({"error": "forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    source = (data.get("source") or "unknown").strip()
+    message = (data.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "message_required"}), 400
+
+    text = f"Источник: {source}\n\n{message}"
+    logger.warning("ALERT from %s: %s", source, message)
+
+    try:
+        send_alert_human(text)
+    except Exception as e:
+        logger.error("Ошибка отправки алерта в Telegram: %s", e)
+
+    return jsonify({"status": "ok"})
+
+
+
 # ---------------- Проверка доступа к миниаппу ----------------
 
 
