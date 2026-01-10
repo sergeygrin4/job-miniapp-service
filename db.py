@@ -72,6 +72,24 @@ def init_db():
         );
     """)
 
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS parser_secrets (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+    """)
+
+    # Статусы/события по парсерам (когда выбило, когда были ошибки)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS parser_status (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        );
+    """)
+
     conn.commit()
     conn.close()
 
