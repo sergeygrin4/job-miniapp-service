@@ -285,11 +285,56 @@
             <button class="btn btn-secondary" onclick="addAdmin()">Добавить</button>
         </div>
     </div>
+<hr style="margin:16px 0;border:none;border-top:1px solid #e0e0e0;">
+
+<h3>Аккаунты парсеров</h3>
+<div class="summary" id="secrets-summary"></div>
+
+<h4 style="margin:10px 0 6px 0;">Facebook cookies (Apify JSON)</h4>
+<textarea id="fb-cookies-json" rows="6" style="width:100%;padding:10px;border-radius:8px;border:1px solid #e0e0e0;font-size:12px;white-space:pre;"></textarea>
+<div class="row-controls" style="margin-top:8px;">
+  <button class="btn btn-secondary" onclick="saveFbCookies()">Сохранить cookies</button>
+</div>
+
+<h4 style="margin:16px 0 6px 0;">Telegram сессия</h4>
+<div class="group-row" style="flex-direction:column;align-items:stretch;gap:8px;">
+  <div style="font-size:12px;color:var(--text-muted);">
+    Шаг 1: отправить код. Шаг 2: ввести код (и пароль 2FA, если включён).
+  </div>
+
+  <input class="group-url-input" id="tg-phone" placeholder="Телефон, напр. +79990000000">
+  <button class="btn btn-secondary" onclick="tgAuthStart()">Отправить код</button>
+
+  <input class="group-url-input" id="tg-code" placeholder="Код из Telegram">
+  <input class="group-url-input" id="tg-password" placeholder="Пароль 2FA (если нужен)">
+  <button class="btn btn-secondary" onclick="tgAuthConfirm()">Подтвердить и сохранить сессию</button>
+
+  <div style="font-size:12px;color:var(--text-muted);">
+    Если удобнее — можно вставить готовую StringSession вручную:
+  </div>
+  <input class="group-url-input" id="tg-session-manual" placeholder="StringSession">
+  <button class="btn btn-outline" onclick="saveTgSessionManual()">Сохранить вручную</button>
+</div>
 
 </div>
 
 <script>
 const API_BASE = window.location.origin;
+
+    let TG_INIT_DATA = "";
+
+function adminHeaders(extra) {
+  const h = Object.assign({}, extra || {});
+  if (TG_INIT_DATA) h["X-TG-INIT-DATA"] = TG_INIT_DATA;
+  return h;
+}
+
+function adminFetch(url, opts) {
+  const o = Object.assign({}, opts || {});
+  o.headers = adminHeaders(o.headers);
+  return fetch(url, o);
+}
+
 
 // ---------------------
 // Helpers
@@ -359,7 +404,8 @@ function switchTab(tab) {
     if (tab === "archive") loadArchive();
     if (tab === "channels") loadChannels();
     if (tab === "fbgroups") loadFbGroups();
-    if (tab === "settings") loadAdmins();
+    if (tab === "settings") { loadAdmins(); loadSecrets(); }
+
 }
 
 // ---------------------
@@ -372,6 +418,8 @@ async function initApp() {
     // Пытаемся достать юзера из Telegram WebApp
     try {
         const telegram = window.Telegram?.WebApp?.initDataUnsafe;
+        TG_INIT_DATA = window.Telegram?.WebApp?.initData || "";
+
         if (telegram?.user) {
             userId = telegram.user.id;
             username = telegram.user.username || null;
@@ -675,7 +723,95 @@ async function removeAdmin(id) {
 }
 
 // -------------------------------------------------------------
-document.addEventListener("DOMContentLoaded", initApp);
+async function loadSecrets() {
+  try {
+    const res = await adminFetch(`${API_BASE}/api/admin/secrets`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const fbUpdated = data.fb_cookies_updated_at ? data.fb_cookies_updated_at : "нет";
+    const tgUpdated = data.tg_session_updated_at ? data.tg_session_updated_at : "нет";
+    const pending = data.tg_auth_pending;
+    const pendingText = pending?.phone ? ` (ожидаем код для ${pending.phone})` : "";
+
+    document.getElementById("secrets-summary").textContent =
+      `FB cookies: ${fbUpdated} · TG session: ${tgUpdated}${pendingText}`;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function saveFbCookies() {
+  const raw = (document.getElementById("fb-cookies-json").value || "").trim();
+  if (!raw) return;
+
+  const res = await adminFetch(`${API_BASE}/api/admin/fb_cookies`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({cookies_json: raw})
+  });
+
+  if (!res.ok) return alert("Ошибка сохранения cookies: " + await res.text());
+  alert("✅ Cookies сохранены");
+  loadSecrets();
+}
+
+async function tgAuthStart() {
+  const phone = (document.getElementById("tg-phone").value || "").trim();
+  if (!phone) return;
+
+  const res = await adminFetch(`${API_BASE}/api/admin/tg_auth/start`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({phone})
+  });
+
+  if (!res.ok) return alert("Ошибка отправки кода: " + await res.text());
+  alert("✅ Код отправлен. Введи его ниже.");
+  loadSecrets();
+}
+
+async function tgAuthConfirm() {
+  const code = (document.getElementById("tg-code").value || "").trim();
+  const password = (document.getElementById("tg-password").value || "").trim();
+  if (!code) return;
+
+  const res = await adminFetch(`${API_BASE}/api/admin/tg_auth/confirm`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({code, password: password || undefined})
+  });
+
+  if (res.ok) {
+    alert("✅ Telegram сессия сохранена");
+    document.getElementById("tg-code").value = "";
+    document.getElementById("tg-password").value = "";
+    loadSecrets();
+    return;
+  }
+
+  const data = await res.json().catch(()=> ({}));
+  if (data.error === "2fa_required") return alert("Нужен пароль 2FA — введи пароль и нажми ещё раз.");
+  alert("Ошибка: " + (data.details || JSON.stringify(data)));
+}
+
+async function saveTgSessionManual() {
+  const s = (document.getElementById("tg-session-manual").value || "").trim();
+  if (!s) return;
+
+  const res = await adminFetch(`${API_BASE}/api/admin/tg_session`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({session: s})
+  });
+
+  if (!res.ok) return alert("Ошибка сохранения session: " + await res.text());
+  alert("✅ Сессия сохранена");
+  loadSecrets();
+}
+
+    
+    document.addEventListener("DOMContentLoaded", initApp);
 </script>
 
 </body>
