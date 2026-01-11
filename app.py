@@ -25,8 +25,21 @@ CORS(app)
 
 PORT = int(os.getenv("PORT", "8080"))
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or ""
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+# ==== ДЕФОЛТНЫЕ ЗНАЧЕНИЯ (на случай, если env не настроен) ====
+TG_API_ID_DEFAULT = 34487940
+TG_API_HASH_DEFAULT = "6f1242a8c3796d44fb761364b35a83f0"
+
+BOT_TOKEN_DEFAULT = "7952407611:AAEG9eqd6KBmmatspCgpfx2bZtcU1YcdmWI"
+ADMIN_CHAT_ID_DEFAULT = "794618749"
+
+# ==== Bot / Admin ====
+BOT_TOKEN = (
+    os.getenv("TELEGRAM_BOT_TOKEN")
+    or os.getenv("BOT_TOKEN")
+    or BOT_TOKEN_DEFAULT
+)
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID") or ADMIN_CHAT_ID_DEFAULT
+
 ADMINS_RAW = os.getenv("ADMINS", "")
 
 API_SECRET = os.getenv("API_SECRET", "")
@@ -96,7 +109,7 @@ def _get_admin_from_request() -> Optional[dict]:
       - если подпись валидна → username должен быть в ADMINS
       - fallback: заголовок X-ADMIN-USERNAME (если initData не пришёл/невалиден)
     """
-    # 1) Пытаемся верифицировать initData
+    # 1) initData
     init_data = request.headers.get("X-TG-INIT-DATA") or ""
     if init_data:
         verified = _verify_tg_init_data(init_data)
@@ -118,7 +131,7 @@ def _get_admin_from_request() -> Optional[dict]:
                             user_id = None
                         return {"user_id": user_id, "username_norm": username_norm}
 
-    # 2) Fallback: доверяем username из заголовка (миниапп его сам ставит)
+    # 2) fallback: X-ADMIN-USERNAME
     username_hdr = request.headers.get("X-ADMIN-USERNAME") or ""
     username_norm = _username_norm(username_hdr)
     if is_admin(username_norm):
@@ -700,8 +713,19 @@ def api_admin_set_tg_session_manual():
 # ---------------- Telegram login flow (semi-auto) ----------------
 
 def _tg_api_creds():
-    api_id = int(os.getenv("TG_API_ID") or os.getenv("API_ID") or "0")
-    api_hash = os.getenv("TG_API_HASH") or os.getenv("API_HASH") or ""
+    """
+    Берём API id/hash из env, а если их нет — используем дефолты.
+    """
+    raw_id = os.getenv("TG_API_ID") or os.getenv("API_ID")
+    if raw_id:
+        try:
+            api_id = int(raw_id)
+        except Exception:
+            api_id = TG_API_ID_DEFAULT
+    else:
+        api_id = TG_API_ID_DEFAULT
+
+    api_hash = os.getenv("TG_API_HASH") or os.getenv("API_HASH") or TG_API_HASH_DEFAULT
     return api_id, api_hash
 
 
@@ -904,4 +928,6 @@ if __name__ == "__main__":
     logger.info("Инициализация БД...")
     init_db()
     logger.info("Запуск Flask на порту %s", PORT)
+    logger.info("TG_API_ID_DEFAULT=%s, BOT_TOKEN set=%s, ADMIN_CHAT_ID=%s",
+                TG_API_ID_DEFAULT, bool(BOT_TOKEN), ADMIN_CHAT_ID)
     app.run(host="0.0.0.0", port=PORT)
