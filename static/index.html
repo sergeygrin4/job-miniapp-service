@@ -200,9 +200,27 @@
       border-bottom: none;
     }
 
-    .list-main { font-size: 14px; }
-    .list-meta { font-size: 12px; color: var(--muted); }
-    .list-meta span { word-break: break-all; }
+    .list-main {
+      font-size: 14px;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .list-main a {
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .list-meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .list-meta span {
+      word-break: break-all;
+    }
 
     .list-controls {
       display: flex;
@@ -560,7 +578,6 @@
         let groupUrl = "";
         let groupLabel = srcNameRaw || srcRaw || "группа";
 
-        // если source_name совпадает с group_id в таблице групп — берём красивое group_name
         if (state.groupMapById && state.groupMapById[srcNameRaw]) {
           const g = state.groupMapById[srcNameRaw];
           if (g.group_name) groupLabel = g.group_name;
@@ -664,7 +681,6 @@
         const data = await apiFetch("/api/groups");
         const groups = data.groups || [];
 
-        // карта для отображения названий в вакансиях
         state.groupMapById = {};
         groups.forEach((g) => {
           if (g.group_id) state.groupMapById[g.group_id] = g;
@@ -684,7 +700,6 @@
           const gidEsc = escapeHtml(gid);
           const nameEsc = escapeHtml(name || gid);
 
-          // для отображения ссылки на группу
           let groupUrlHtml = gidEsc;
           if (gid && gid.startsWith("http")) {
             groupUrlHtml = `<a href="${gidEsc}" target="_blank" rel="noopener noreferrer">${gidEsc}</a>`;
