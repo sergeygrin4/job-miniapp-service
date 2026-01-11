@@ -8,18 +8,15 @@
     :root {
       --bg: #ffffff;
       --text: #111111;
-      --text-muted: #666666;
+      --muted: #666666;
       --card: #f6f7f9;
       --border: #e0e0e0;
       --btn: #2a7fff;
-      --btn2: #1f6de0;
+      --btn-hover: #1f6de0;
       --danger: #ff3b30;
-      --ok: #21c45a;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -29,17 +26,17 @@
     }
 
     .wrap {
-      max-width: 960px;
+      max-width: 900px;
       margin: 0 auto;
       padding: 12px;
     }
 
     .topbar {
       display: flex;
-      gap: 10px;
-      align-items: center;
       justify-content: space-between;
-      margin-bottom: 10px;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
       flex-wrap: wrap;
     }
 
@@ -50,15 +47,15 @@
 
     .tabs {
       display: flex;
-      gap: 8px;
       flex-wrap: wrap;
-      margin-bottom: 10px;
+      gap: 8px;
+      margin-bottom: 8px;
     }
 
     .tab {
-      padding: 8px 12px;
-      border: 1px solid var(--border);
+      padding: 6px 12px;
       border-radius: 10px;
+      border: 1px solid var(--border);
       background: #fff;
       cursor: pointer;
       font-size: 14px;
@@ -72,60 +69,24 @@
 
     .card {
       background: var(--card);
-      border: 1px solid var(--border);
       border-radius: 14px;
-      padding: 12px;
-      margin: 10px 0;
+      border: 1px solid var(--border);
+      padding: 10px;
+      margin: 8px 0;
     }
 
     .row {
       display: flex;
-      gap: 10px;
       flex-wrap: wrap;
+      gap: 8px;
     }
 
     .col {
       flex: 1;
-      min-width: 260px;
+      min-width: 240px;
     }
 
-    .btn {
-      border: none;
-      background: var(--btn);
-      color: #fff;
-      padding: 8px 12px;
-      border-radius: 10px;
-      cursor: pointer;
-      font-size: 14px;
-    }
-
-    .btn:hover {
-      background: var(--btn2);
-    }
-
-    .btn-outline {
-      background: #fff;
-      color: var(--btn);
-      border: 1px solid var(--btn);
-    }
-
-    .btn-outline:hover {
-      background: #eef5ff;
-    }
-
-    .btn-danger {
-      background: var(--danger);
-    }
-
-    .btn-secondary {
-      background: #3a3a3a;
-    }
-
-    .btn-secondary:hover {
-      background: #2b2b2b;
-    }
-
-    input, textarea, select {
+    input, textarea {
       width: 100%;
       padding: 8px 10px;
       border-radius: 10px;
@@ -136,102 +97,94 @@
 
     textarea {
       resize: vertical;
-      min-height: 80px;
+      min-height: 70px;
     }
 
     label {
-      display: block;
       font-size: 13px;
-      margin-bottom: 4px;
       font-weight: 500;
+      margin-bottom: 4px;
+      display: block;
     }
 
     .muted {
-      color: var(--text-muted);
       font-size: 12px;
+      color: var(--muted);
+    }
+
+    .btn {
+      border: none;
+      border-radius: 10px;
+      background: var(--btn);
+      color: #fff;
+      font-size: 14px;
+      padding: 7px 12px;
+      cursor: pointer;
+    }
+
+    .btn:hover { background: var(--btn-hover); }
+
+    .btn-secondary {
+      background: #444;
+    }
+
+    .btn-secondary:hover {
+      background: #333;
+    }
+
+    .btn-outline {
+      background: #fff;
+      color: var(--btn);
+      border: 1px solid var(--btn);
+    }
+
+    .btn-outline:hover {
+      background: #eef4ff;
+    }
+
+    .btn-danger {
+      background: var(--danger);
     }
 
     .job {
       white-space: pre-wrap;
       font-size: 14px;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }
 
     .job-meta {
       font-size: 12px;
-      color: var(--text-muted);
+      color: var(--muted);
       display: flex;
-      gap: 10px;
       flex-wrap: wrap;
-      align-items: center;
+      gap: 8px;
     }
 
     .badge {
-      font-size: 12px;
-      padding: 2px 8px;
+      display: inline-block;
+      padding: 1px 6px;
       border-radius: 999px;
       background: #fff;
       border: 1px solid var(--border);
-    }
-
-    .badge-ok {
-      border-color: var(--ok);
-      color: var(--ok);
-    }
-
-    .badge-danger {
-      border-color: var(--danger);
-      color: var(--danger);
-    }
-
-    .badge-muted {
-      border-style: dashed;
+      font-size: 11px;
     }
 
     .job-actions {
       margin-top: 6px;
       display: flex;
-      gap: 6px;
       flex-wrap: wrap;
-    }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
       gap: 6px;
-      font-size: 12px;
-    }
-
-    .pill input[type="checkbox"] {
-      margin: 0;
     }
 
     .flash {
-      margin-bottom: 8px;
       font-size: 13px;
+      margin-bottom: 4px;
     }
 
-    .flash-ok {
-      color: var(--ok);
-    }
+    .flash-ok { color: #0a9b3f; }
+    .flash-error { color: var(--danger); }
 
-    .flash-error {
-      color: var(--danger);
-    }
-
-    .hidden {
-      display: none !important;
-    }
-
-    .small-input-inline {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-    }
-
-    .small-input-inline input {
-      flex: 1;
-    }
+    .hidden { display: none !important; }
 
     .list-item {
       display: flex;
@@ -239,24 +192,22 @@
       align-items: flex-start;
       gap: 8px;
       padding: 6px 0;
-      border-bottom: 1px dashed rgba(0,0,0,0.04);
+      border-bottom: 1px dashed rgba(0,0,0,0.05);
     }
 
     .list-item:last-child {
       border-bottom: none;
     }
 
-    .list-item-main {
-      font-size: 14px;
-    }
+    .list-main { font-size: 14px; }
+    .list-meta { font-size: 12px; color: var(--muted); }
 
-    .list-item-meta {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
+    .text-right { text-align: right; }
 
-    .text-right {
-      text-align: right;
+    hr {
+      border: none;
+      border-top: 1px dashed rgba(0,0,0,0.1);
+      margin: 8px 0;
     }
   </style>
 </head>
@@ -273,7 +224,7 @@
       <b>Доступ запрещён</b>
       <p class="muted" style="margin-top:4px;">
         Тебя нет в списке доступа. Напиши админу, чтобы он добавил твой @username
-        на вкладке <b>⚙️ Настройки → Доступ</b>.
+        на вкладке <b>Доступ</b>.
       </p>
     </div>
 
@@ -282,41 +233,33 @@
         <div class="tab active" data-tab="jobs">Вакансии</div>
         <div class="tab" data-tab="groups">Группы</div>
         <div class="tab admin-only" data-tab="settings">⚙️ Настройки</div>
+        <div class="tab" data-tab="archive">Архив</div>
         <div class="tab admin-only" data-tab="access">Доступ</div>
       </div>
 
-      <!-- TAB: JOBS -->
+      <!-- Вакансии -->
       <div id="tab-jobs" class="tab-page">
         <div class="card">
-          <div class="row">
-            <div class="col">
-              <label>Поиск по тексту</label>
-              <input id="jobs-q" placeholder="ключевые слова..." />
-            </div>
-            <div class="col">
-              <label>Источник (source)</label>
-              <input id="jobs-source" placeholder="facebook / t.me/... (необязательно)" />
-            </div>
-            <div class="col">
-              <label>&nbsp;</label>
-              <div class="small-input-inline">
-                <label class="pill">
-                  <input type="checkbox" id="jobs-archived" />
-                  <span>Показать архив</span>
-                </label>
-                <button class="btn btn-secondary" id="jobs-refresh-btn">Обновить</button>
-              </div>
-            </div>
-          </div>
+          <button class="btn" id="jobs-refresh-btn">Обновить</button>
           <p class="muted" style="margin-top:6px;">
             Здесь видно то, что прилетело от FB и TG парсеров через endpoint <code>/post</code>.
           </p>
         </div>
-
         <div id="jobs-list"></div>
       </div>
 
-      <!-- TAB: GROUPS -->
+      <!-- Архив -->
+      <div id="tab-archive" class="tab-page hidden">
+        <div class="card">
+          <button class="btn" id="archive-refresh-btn">Обновить архив</button>
+          <p class="muted" style="margin-top:6px;">
+            Здесь отображаются вакансии, которые были отправлены в архив.
+          </p>
+        </div>
+        <div id="archive-list"></div>
+      </div>
+
+      <!-- Группы -->
       <div id="tab-groups" class="tab-page hidden">
         <div class="card">
           <div class="row">
@@ -328,65 +271,59 @@
               <label>Название (опционально)</label>
               <input id="group-name-input" placeholder="Как будем отображать" />
             </div>
-            <div class="col">
-              <label>&nbsp;</label>
+            <div class="col" style="align-self:flex-end;">
               <button class="btn" id="group-add-btn">Добавить</button>
             </div>
           </div>
           <p class="muted" style="margin-top:6px;">
-            Список отсюда использует Telegram-парсер (<code>/api/groups</code>) и FB-парсер
-            (<code>/api/fb_groups</code>).
+            Список отсюда использует Telegram-парсер (<code>/api/groups</code>) и FB-парсер (<code>/api/fb_groups</code>).
           </p>
         </div>
-
         <div id="groups-list"></div>
       </div>
 
-      <!-- TAB: SETTINGS -->
+      <!-- Настройки (только админы) -->
       <div id="tab-settings" class="tab-page hidden">
-        <!-- Общий статус -->
-        <div class="card">
-          <b>Состояние аккаунтов</b>
-          <div id="secrets-status" class="muted" style="margin-top:6px;">
-            Загрузка статуса...
-          </div>
-        </div>
-
-        <!-- FB cookies -->
         <div class="card">
           <b>Facebook cookies (Apify)</b>
           <p class="muted" style="margin-top:4px;">
-            Вставь JSON из Apify (масси... объектов cookies). Формат:
-            <code>[{"key": "...", "value": "...", ...}, ...]</code>.
+            1) Один раз сохрани <b>полный JSON</b> cookies, который даёт Apify.<br/>
+            2) Дальше обычно меняются только значения (например <code>c_user</code>, <code>xs</code>, <code>fr</code>) —
+            их можно вставлять ниже строкой <code>key=value; key2=value2</code>.
           </p>
-          <textarea id="fb-cookies-text" placeholder='[{"key":"c_user","value":"..."}, ...]'></textarea>
-          <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
-            <button class="btn" id="fb-cookies-save-btn">Сохранить cookies</button>
+          <label>Полный JSON cookies (при первичной настройке или если структура поменялась)</label>
+          <textarea id="fb-cookies-json" placeholder='[{"key":"c_user","value":"..."}, ...]'></textarea>
+          <div style="margin-top:6px;">
+            <button class="btn" id="fb-cookies-json-btn">Сохранить полный JSON</button>
+          </div>
+
+          <hr/>
+
+          <label>Динамичные cookie (формат: <code>c_user=...; xs=...; fr=...</code>)</label>
+          <textarea id="fb-cookies-dynamic" placeholder="c_user=...; xs=...; fr=..."></textarea>
+          <div style="margin-top:6px;">
+            <button class="btn btn-secondary" id="fb-cookies-dynamic-btn">Обновить значения cookies</button>
           </div>
         </div>
 
-        <!-- TG session manual -->
         <div class="card">
-          <b>Telegram: StringSession (ручной ввод)</b>
+          <b>Telegram StringSession (ручной ввод)</b>
           <p class="muted" style="margin-top:4px;">
-            Если у тебя уже есть StringSession (например, из локального скрипта),
-            можно просто вставить её сюда.
+            Если у тебя уже есть готовая StringSession (локальный скрипт и т.п.), просто вставь её сюда.
           </p>
           <textarea id="tg-session-text" placeholder="1AAABbCc..."></textarea>
-          <div style="margin-top:8px;">
-            <button class="btn btn-secondary" id="tg-session-save-btn">Сохранить StringSession</button>
+          <div style="margin-top:6px;">
+            <button class="btn" id="tg-session-save-btn">Сохранить StringSession</button>
           </div>
         </div>
 
-        <!-- TG semi-auto login -->
         <div class="card">
           <b>Telegram: полуавтоматический логин по коду</b>
           <p class="muted" style="margin-top:4px;">
-            Шаг 1 — вводишь номер, мы отправляем код через MiniApp-бэкенд.<br/>
-            Шаг 2 — вводишь код (и пароль 2FA, если есть), бэкенд сохраняет новую StringSession
-            в хранилище, и её автоматически подхватит парсер.
+            Шаг 1 — вводишь номер, мы отправляем код.<br/>
+            Шаг 2 — вводишь код (и пароль 2FA, если есть), после чего миниапп сохранит новую StringSession,
+            а парсер её подхватит.
           </p>
-
           <div class="row" style="margin-top:6px;">
             <div class="col">
               <label>Телефон (+7999...)</label>
@@ -396,8 +333,7 @@
               <button class="btn" id="tg-send-code-btn">Отправить код</button>
             </div>
           </div>
-
-          <div class="row" style="margin-top:10px;">
+          <div class="row" style="margin-top:8px;">
             <div class="col">
               <label>Код из Telegram</label>
               <input id="tg-code-input" placeholder="12345" />
@@ -410,12 +346,11 @@
               <button class="btn btn-outline" id="tg-confirm-code-btn">Подтвердить код, создать сессию</button>
             </div>
           </div>
-
           <p id="tg-auth-hint" class="muted" style="margin-top:6px;"></p>
         </div>
       </div>
 
-      <!-- TAB: ACCESS -->
+      <!-- Доступ (только админы) -->
       <div id="tab-access" class="tab-page hidden">
         <div class="card">
           <b>Разрешённые пользователи</b>
@@ -423,7 +358,6 @@
             Любой, кто открывает миниапп, сначала бьётся в <code>/check_access</code>.
             Здесь можно управлять списком тех, кому есть доступ.
           </p>
-
           <div id="allowed-users-list" style="margin-top:8px;"></div>
         </div>
 
@@ -449,25 +383,21 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script>
     const state = {
-      initData: "",
       user: null,
+      initData: "",
       isAdmin: false,
     };
 
-    const qs = new URLSearchParams(location.search);
+    function $(id) { return document.getElementById(id); }
 
-    function $(id) {
-      return document.getElementById(id);
-    }
-
-    function showFlash(message, isError = false) {
+    function showFlash(msg, isError = false) {
       const el = $("flash");
-      if (!message) {
+      if (!msg) {
         el.classList.add("hidden");
         el.textContent = "";
         return;
       }
-      el.textContent = message;
+      el.textContent = msg;
       el.classList.remove("hidden");
       el.classList.toggle("flash-error", !!isError);
       el.classList.toggle("flash-ok", !isError);
@@ -477,7 +407,13 @@
       if (!iso) return "—";
       const d = new Date(iso);
       if (isNaN(d.getTime())) return iso;
-      return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      return d.toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     }
 
     function escapeHtml(str) {
@@ -492,9 +428,8 @@
 
     function adminHeaders() {
       const h = { "Content-Type": "application/json" };
-      if (state.initData) {
-        h["X-TG-INIT-DATA"] = state.initData;
-      }
+      if (state.initData) h["X-TG-INIT-DATA"] = state.initData;
+      if (state.user && state.user.username) h["X-ADMIN-USERNAME"] = state.user.username;
       return h;
     }
 
@@ -503,16 +438,10 @@
         method,
         headers: admin ? adminHeaders() : { "Content-Type": "application/json" },
       };
-      if (body != null) {
-        init.body = JSON.stringify(body);
-      }
+      if (body != null) init.body = JSON.stringify(body);
       const res = await fetch(url, init);
       let data = null;
-      try {
-        data = await res.json();
-      } catch (e) {
-        // ignore
-      }
+      try { data = await res.json(); } catch (e) {}
       if (!res.ok) {
         const msg = (data && (data.error || data.message)) || ("HTTP " + res.status);
         throw new Error(msg);
@@ -522,12 +451,9 @@
 
     function updateUserInfoUI() {
       const el = $("user-info");
-      if (!state.user) {
-        el.textContent = "";
-        return;
-      }
-      const username = state.user.username ? "@" + state.user.username : ("id=" + state.user.id);
-      el.textContent = username + (state.isAdmin ? " · админ" : "");
+      if (!state.user) { el.textContent = ""; return; }
+      const uname = state.user.username ? "@" + state.user.username : ("id=" + state.user.id);
+      el.textContent = uname + (state.isAdmin ? " · админ" : "");
     }
 
     async function checkAccess() {
@@ -538,23 +464,17 @@
       try {
         const resp = await apiFetch("/check_access", {
           method: "POST",
-          body: {
-            user_id: state.user.id,
-            username: state.user.username || "",
-          },
+          body: { user_id: state.user.id, username: state.user.username || "" },
         });
-
         if (!resp.access_granted) {
           $("access-denied").classList.remove("hidden");
           $("main").classList.add("hidden");
           showFlash("Нет доступа к миниаппу", true);
           return;
         }
-
         state.isAdmin = !!resp.is_admin;
         updateUserInfoUI();
 
-        // скрываем/показываем админ-вкладки
         document.querySelectorAll(".admin-only").forEach((el) => {
           if (state.isAdmin) el.classList.remove("hidden");
           else el.classList.add("hidden");
@@ -563,11 +483,10 @@
         $("access-denied").classList.add("hidden");
         $("main").classList.remove("hidden");
 
-        // начальная загрузка данных
-        loadJobs();
+        loadJobs(false);
+        loadJobs(true);  // предварительно подгружаем и архив
         loadGroups();
         if (state.isAdmin) {
-          loadSecretsStatus();
           loadAllowedUsers();
         }
       } catch (e) {
@@ -577,92 +496,78 @@
       }
     }
 
-    // ----- JOBS -----
+    // --------- Вакансии / архив ---------
 
-    async function loadJobs() {
-      const q = $("jobs-q").value.trim();
-      const source = $("jobs-source").value.trim();
-      const archived = $("jobs-archived").checked;
+    function renderJobs(containerId, jobs, archived) {
+      const list = $(containerId);
+      if (!jobs || !jobs.length) {
+        list.innerHTML = '<div class="card muted">Пока ничего нет.</div>';
+        return;
+      }
+      list.innerHTML = jobs.map((j) => {
+        const srcName = escapeHtml(j.source_name || j.source || "");
+        const url = escapeHtml(j.url || "");
+        const sender = escapeHtml(j.sender_username || "");
+        const created = formatDate(j.created_at);
+        const received = formatDate(j.received_at);
+        const linkHtml = url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">Открыть пост</a>` : "";
+        const archiveBtn = state.isAdmin
+          ? `<button class="btn btn-outline btn-xs" data-job-id="${j.id}" data-archived="${archived ? "true" : "false"}">
+               ${archived ? "Вернуть из архива" : "В архив"}
+             </button>`
+          : "";
+        return `
+          <div class="card">
+            <div class="job">${escapeHtml(j.text || "")}</div>
+            <div class="job-meta">
+              <span class="badge">${srcName || "unknown"}</span>
+              <span>Создано: ${created}</span>
+              <span>Получено: ${received}</span>
+              ${sender ? `<span>Автор: ${sender}</span>` : ""}
+              ${linkHtml ? `<span>${linkHtml}</span>` : ""}
+            </div>
+            ${archiveBtn ? `<div class="job-actions">${archiveBtn}</div>` : ""}
+          </div>`;
+      }).join("");
 
+      if (state.isAdmin) {
+        list.querySelectorAll("button[data-job-id]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-job-id");
+            const isArchived = btn.getAttribute("data-archived") === "true";
+            try {
+              await apiFetch(`/api/jobs/${id}/archive`, {
+                method: "POST",
+                admin: true,
+                body: { archived: !isArchived },
+              });
+              showFlash("Статус вакансии обновлён");
+              loadJobs(false);
+              loadJobs(true);
+            } catch (e) {
+              console.error(e);
+              showFlash("Ошибка архивирования: " + e.message, true);
+            }
+          });
+        });
+      }
+    }
+
+    async function loadJobs(archived) {
       const params = new URLSearchParams();
       params.set("limit", "50");
       params.set("archived", archived ? "true" : "false");
-      if (q) params.set("q", q);
-      if (source) params.set("source", source);
-
       try {
         const data = await apiFetch("/api/jobs?" + params.toString());
-        const list = $("jobs-list");
         const jobs = data.jobs || [];
-        if (!jobs.length) {
-          list.innerHTML = '<div class="card muted">Пока ничего нет.</div>';
-          return;
-        }
-
-        list.innerHTML = jobs
-          .map((j) => {
-            const src = escapeHtml(j.source || "");
-            const srcName = escapeHtml(j.source_name || "");
-            const url = escapeHtml(j.url || "");
-            const sender = escapeHtml(j.sender_username || "");
-            const created = formatDate(j.created_at);
-            const received = formatDate(j.received_at);
-            const archivedBadge = j.archived
-              ? '<span class="badge badge-danger">В архиве</span>'
-              : "";
-            const linkHtml = url
-              ? `<a href="${url}" target="_blank" rel="noopener noreferrer">Открыть пост</a>`
-              : "";
-
-            const archiveBtn = state.isAdmin
-              ? `<button class="btn btn-outline btn-xs" data-job-id="${j.id}" data-archived="${j.archived ? "true" : "false"}">
-                   ${j.archived ? "Вернуть из архива" : "В архив"}
-                 </button>`
-              : "";
-
-            return `
-              <div class="card">
-                <div class="job">${escapeHtml(j.text || "")}</div>
-                <div class="job-meta">
-                  <span class="badge">${srcName || src || "unknown"}</span>
-                  ${archivedBadge}
-                  <span>Создано: ${created}</span>
-                  <span>Получено: ${received}</span>
-                  ${sender ? `<span>Автор: ${sender}</span>` : ""}
-                  ${linkHtml ? `<span>${linkHtml}</span>` : ""}
-                </div>
-                ${archiveBtn ? `<div class="job-actions">${archiveBtn}</div>` : ""}
-              </div>`;
-          })
-          .join("");
-
-        if (state.isAdmin) {
-          $("jobs-list").querySelectorAll("button[data-job-id]").forEach((btn) => {
-            btn.addEventListener("click", async () => {
-              const id = btn.getAttribute("data-job-id");
-              const isArchived = btn.getAttribute("data-archived") === "true";
-              try {
-                await apiFetch(`/api/jobs/${id}/archive`, {
-                  method: "POST",
-                  admin: true,
-                  body: { archived: !isArchived },
-                });
-                showFlash("Статус вакансии обновлён");
-                loadJobs();
-              } catch (e) {
-                console.error(e);
-                showFlash("Ошибка архивирования: " + e.message, true);
-              }
-            });
-          });
-        }
+        renderJobs(archived ? "archive-list" : "jobs-list", jobs, archived);
       } catch (e) {
         console.error(e);
         showFlash("Ошибка загрузки вакансий: " + e.message, true);
       }
     }
 
-    // ----- GROUPS -----
+    // --------- Группы ---------
 
     async function loadGroups() {
       try {
@@ -673,35 +578,34 @@
           list.innerHTML = '<div class="card muted">Пока ни одной группы не добавлено.</div>';
           return;
         }
-
-        list.innerHTML = groups
-          .map((g) => {
-            const id = g.id;
-            const gid = g.group_id || "";
-            const name = g.group_name || "";
-            const enabled = !!g.enabled;
-            const added = formatDate(g.added_at);
-            return `
-              <div class="card">
-                <div class="list-item">
-                  <div class="list-item-main">
-                    <div><b>${escapeHtml(name || gid)}</b></div>
-                    <div class="list-item-meta">
-                      <span>group_id: ${escapeHtml(gid)}</span>
-                      <span>Добавлено: ${added}</span>
-                    </div>
-                  </div>
-                  <div class="text-right">
-                    <div class="pill">
-                      <input type="checkbox" data-action="toggle" data-id="${id}" ${enabled ? "checked" : ""}/>
-                      <span>${enabled ? "Включено" : "Выключено"}</span>
-                    </div>
-                    ${state.isAdmin ? `<button class="btn btn-outline btn-danger" style="margin-top:6px;" data-action="delete" data-id="${id}">Удалить</button>` : ""}
+        list.innerHTML = groups.map((g) => {
+          const id = g.id;
+          const gid = g.group_id || "";
+          const name = g.group_name || "";
+          const enabled = !!g.enabled;
+          const added = formatDate(g.added_at);
+          return `
+            <div class="card">
+              <div class="list-item">
+                <div>
+                  <div class="list-main"><b>${escapeHtml(name || gid)}</b></div>
+                  <div class="list-meta">
+                    <span>group_id: ${escapeHtml(gid)}</span>
+                    <span>Добавлено: ${added}</span>
                   </div>
                 </div>
-              </div>`;
-          })
-          .join("");
+                <div class="text-right">
+                  <div>
+                    <label style="font-size:12px;">
+                      <input type="checkbox" data-action="toggle" data-id="${id}" ${enabled ? "checked" : ""}/>
+                      <span>${enabled ? "Включено" : "Выключено"}</span>
+                    </label>
+                  </div>
+                  ${state.isAdmin ? `<button class="btn btn-outline btn-danger" style="margin-top:6px;" data-action="delete" data-id="${id}">Удалить</button>` : ""}
+                </div>
+              </div>
+            </div>`;
+        }).join("");
 
         if (state.isAdmin) {
           list.querySelectorAll("input[data-action='toggle']").forEach((ch) => {
@@ -747,66 +651,49 @@
       }
     }
 
-    // ----- SECRETS / SETTINGS -----
+    // --------- Настройки / secrets ---------
 
-    async function loadSecretsStatus() {
-      try {
-        const data = await apiFetch("/api/admin/secrets", { admin: true });
-        const fbAt = data.fb_cookies_updated_at;
-        const tgAt = data.tg_session_updated_at;
-        const pending = data.tg_auth_pending || null;
-
-        const lines = [];
-        lines.push("Facebook cookies: " + formatDate(fbAt));
-        lines.push("Telegram StringSession: " + formatDate(tgAt));
-        if (pending && pending.phone) {
-          lines.push(
-            "Ожидается подтверждение кода для " +
-              pending.phone +
-              " (запущено: " +
-              formatDate(pending.started_at) +
-              ")"
-          );
-        } else {
-          lines.push("Нет активного процесса авторизации по коду.");
-        }
-
-        $("secrets-status").innerHTML = lines.map(escapeHtml).join("<br/>");
-      } catch (e) {
-        console.error(e);
-        $("secrets-status").textContent = "Ошибка загрузки статуса: " + e.message;
-      }
-    }
-
-    async function saveFbCookies() {
-      const raw = $("fb-cookies-text").value.trim();
+    async function saveFbCookiesFull() {
+      const raw = $("fb-cookies-json").value.trim();
       if (!raw) {
-        showFlash("Вставь JSON с cookies", true);
+        showFlash("Вставь полный JSON cookies", true);
         return;
       }
       try {
-        // валидация на фронте для удобства
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) {
-          showFlash("cookies_json должен быть массивом", true);
-          return;
-        }
+        JSON.parse(raw);
       } catch (e) {
-        showFlash("Некорректный JSON cookies: " + e.message, true);
+        showFlash("Некорректный JSON: " + e.message, true);
         return;
       }
-
       try {
         await apiFetch("/api/admin/fb_cookies", {
           method: "POST",
           admin: true,
           body: { cookies_json: raw },
         });
-        showFlash("Facebook cookies сохранены");
-        loadSecretsStatus();
+        showFlash("Полный JSON cookies сохранён");
       } catch (e) {
         console.error(e);
         showFlash("Ошибка сохранения cookies: " + e.message, true);
+      }
+    }
+
+    async function saveFbCookiesDynamic() {
+      const raw = $("fb-cookies-dynamic").value.trim();
+      if (!raw) {
+        showFlash("Вставь строку вида c_user=...; xs=...; fr=...", true);
+        return;
+      }
+      try {
+        await apiFetch("/api/admin/fb_cookies_dynamic", {
+          method: "POST",
+          admin: true,
+          body: { cookie_kv: raw },
+        });
+        showFlash("Динамичные значения cookies обновлены");
+      } catch (e) {
+        console.error(e);
+        showFlash("Ошибка обновления cookies: " + e.message, true);
       }
     }
 
@@ -823,7 +710,6 @@
           body: { session },
         });
         showFlash("Telegram StringSession сохранена");
-        loadSecretsStatus();
       } catch (e) {
         console.error(e);
         showFlash("Ошибка сохранения StringSession: " + e.message, true);
@@ -843,9 +729,7 @@
           body: { phone },
         });
         showFlash("Код отправлен в Telegram. Введи его ниже.");
-        $("tg-auth-hint").textContent = "Код отправлен. Введи код и пароль 2FA (если есть), затем нажми «Подтвердить код».";
-
-        loadSecretsStatus();
+        $("tg-auth-hint").textContent = "Код отправлен. Введи код и пароль 2FA (если есть) и нажми кнопку ниже.";
       } catch (e) {
         console.error(e);
         showFlash("Ошибка отправки кода: " + e.message, true);
@@ -869,14 +753,13 @@
         $("tg-auth-hint").textContent = "";
         $("tg-code-input").value = "";
         $("tg-password-input").value = "";
-        loadSecretsStatus();
       } catch (e) {
         console.error(e);
         showFlash("Ошибка подтверждения кода: " + e.message, true);
       }
     }
 
-    // ----- ALLOWED USERS -----
+    // --------- Разрешённые пользователи ---------
 
     async function loadAllowedUsers() {
       try {
@@ -887,24 +770,22 @@
           list.innerHTML = '<div class="muted">Список пуст.</div>';
           return;
         }
-        list.innerHTML = users
-          .map((u) => {
-            const updated = formatDate(u.updated_at);
-            return `
-              <div class="list-item">
-                <div>
-                  <div class="list-item-main"><b>@${escapeHtml(u.username)}</b></div>
-                  <div class="list-item-meta">
-                    <span>ID: ${escapeHtml(u.user_id ?? "")}</span>
-                    <span>Обновлено: ${updated}</span>
-                  </div>
+        list.innerHTML = users.map((u) => {
+          const updated = formatDate(u.updated_at);
+          return `
+            <div class="list-item">
+              <div>
+                <div class="list-main"><b>@${escapeHtml(u.username)}</b></div>
+                <div class="list-meta">
+                  <span>ID: ${escapeHtml(u.user_id ?? "")}</span>
+                  <span>Обновлено: ${updated}</span>
                 </div>
-                <div>
-                  <button class="btn btn-outline btn-danger" data-id="${u.id}">Удалить</button>
-                </div>
-              </div>`;
-          })
-          .join("");
+              </div>
+              <div>
+                <button class="btn btn-outline btn-danger" data-id="${u.id}">Удалить</button>
+              </div>
+            </div>`;
+        }).join("");
 
         list.querySelectorAll("button[data-id]").forEach((btn) => {
           btn.addEventListener("click", async () => {
@@ -915,7 +796,7 @@
                 method: "DELETE",
                 admin: true,
               });
-              showFlash("Пользователь удалён из доступа");
+              showFlash("Пользователь удалён");
               loadAllowedUsers();
             } catch (e) {
               console.error(e);
@@ -950,30 +831,24 @@
       }
     }
 
-    // ----- TABS -----
+    // --------- Табы и инициализация ---------
 
     function initTabs() {
-      const tabs = document.querySelectorAll(".tab");
-      tabs.forEach((tab) => {
+      document.querySelectorAll(".tab").forEach((tab) => {
         tab.addEventListener("click", () => {
           const name = tab.getAttribute("data-tab");
-          tabs.forEach((t) => t.classList.remove("active"));
+          document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
           tab.classList.add("active");
-
-          document.querySelectorAll(".tab-page").forEach((page) => {
-            page.classList.add("hidden");
-          });
-          const page = document.getElementById("tab-" + name);
+          document.querySelectorAll(".tab-page").forEach((p) => p.classList.add("hidden"));
+          const page = $("tab-" + name);
           if (page) page.classList.remove("hidden");
         });
       });
     }
 
     function initEvents() {
-      $("jobs-refresh-btn").addEventListener("click", () => loadJobs());
-      $("jobs-q").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") loadJobs();
-      });
+      $("jobs-refresh-btn").addEventListener("click", () => loadJobs(false));
+      $("archive-refresh-btn").addEventListener("click", () => loadJobs(true));
 
       $("group-add-btn").addEventListener("click", async () => {
         const gid = $("group-id-input").value.trim();
@@ -998,7 +873,8 @@
         }
       });
 
-      $("fb-cookies-save-btn").addEventListener("click", saveFbCookies);
+      $("fb-cookies-json-btn").addEventListener("click", saveFbCookiesFull);
+      $("fb-cookies-dynamic-btn").addEventListener("click", saveFbCookiesDynamic);
       $("tg-session-save-btn").addEventListener("click", saveTgSessionManual);
       $("tg-send-code-btn").addEventListener("click", tgAuthStart);
       $("tg-confirm-code-btn").addEventListener("click", tgAuthConfirm);
@@ -1017,12 +893,6 @@
           tg.expand();
         } catch (e) {
           console.warn("Telegram WebApp init error", e);
-        }
-      } else {
-        // Фоллбек для локальной отладки (без Telegram)
-        const fakeUser = qs.get("debug_user");
-        if (fakeUser) {
-          state.user = { id: 1, username: fakeUser };
         }
       }
       updateUserInfoUI();
