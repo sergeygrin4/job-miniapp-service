@@ -18,7 +18,7 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
-    # Источники (и TG, и FB)
+    # Источники (группы FB/TG)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS fb_groups (
@@ -52,18 +52,24 @@ def init_db():
     )
 
     # Поддержка старых схем (безопасно, если колонки уже есть)
-    cur.execute("""ALTER TABLE jobs ADD COLUMN IF NOT EXISTS sender_username TEXT;""")
-    cur.execute("""ALTER TABLE jobs ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;""")
-    cur.execute("""ALTER TABLE jobs ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;""")
+    cur.execute(
+        """ALTER TABLE jobs ADD COLUMN IF NOT EXISTS sender_username TEXT;"""
+    )
+    cur.execute(
+        """ALTER TABLE jobs ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;"""
+    )
+    cur.execute(
+        """ALTER TABLE jobs ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;"""
+    )
 
-    # Пользователи
+    # Пользователи, которым разрешён доступ к миниаппу
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS allowed_users (
             id SERIAL PRIMARY KEY,
             username TEXT NOT NULL UNIQUE,
             user_id BIGINT,
-            updated_at TIMESTAMPTAMPTZ NOT NULL DEFAULT NOW()
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         """
     )
@@ -79,7 +85,7 @@ def init_db():
         """
     )
 
-    # Статусы/события по парсерам (когда выбило, когда были ошибки)
+    # Статусы/события по парсерам (когда были пинги, когда выбило и т.п.)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS parser_status (
@@ -99,7 +105,10 @@ def init_db():
 def get_secret(key: str):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT key, value, updated_at FROM parser_secrets WHERE key = %s", (key,))
+    cur.execute(
+        "SELECT key, value, updated_at FROM parser_secrets WHERE key = %s",
+        (key,),
+    )
     row = cur.fetchone()
     conn.close()
     return row
@@ -125,7 +134,10 @@ def set_secret(key: str, value: str):
 def get_status(key: str):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT key, value, updated_at FROM parser_status WHERE key = %s", (key,))
+    cur.execute(
+        "SELECT key, value, updated_at FROM parser_status WHERE key = %s",
+        (key,),
+    )
     row = cur.fetchone()
     conn.close()
     return row
