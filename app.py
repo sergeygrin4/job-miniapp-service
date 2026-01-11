@@ -1,11 +1,9 @@
 import os
-import re
 import json
 import hmac
 import hashlib
 import asyncio
 import logging
-import requests
 from urllib.parse import parse_qsl
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -32,8 +30,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 ADMINS_RAW = os.getenv("ADMINS", "")
 
 API_SECRET = os.getenv("API_SECRET", "")
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+TELEGRAM_BOT_TOKEN = BOT_TOKEN
 
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 
@@ -61,9 +58,6 @@ def is_admin(username_norm: Optional[str]) -> bool:
 
 
 # ---------------- Telegram WebApp auth (initData) ----------------
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or ""
-
 
 def _verify_tg_init_data(init_data: str) -> Optional[dict]:
     """
@@ -99,9 +93,8 @@ def _get_admin_from_request() -> Optional[dict]:
     """
     Админ-аутентификация для UI-запросов:
       - заголовок X-TG-INIT-DATA (window.Telegram.WebApp.initData)
-      - проверяем подпись (если получается)
-      - проверяем username в ADMINS
-      - fallback: заголовок X-ADMIN-USERNAME, если initData невалиден
+      - если подпись валидна → username должен быть в ADMINS
+      - fallback: заголовок X-ADMIN-USERNAME (если initData не пришёл/невалиден)
     """
     # 1) Пытаемся верифицировать initData
     init_data = request.headers.get("X-TG-INIT-DATA") or ""
@@ -125,7 +118,7 @@ def _get_admin_from_request() -> Optional[dict]:
                             user_id = None
                         return {"user_id": user_id, "username_norm": username_norm}
 
-    # 2) Fallback: доверяем username из заголовка (миниапп передаёт сам).
+    # 2) Fallback: доверяем username из заголовка (миниапп его сам ставит)
     username_hdr = request.headers.get("X-ADMIN-USERNAME") or ""
     username_norm = _username_norm(username_hdr)
     if is_admin(username_norm):
@@ -241,11 +234,6 @@ def add_job():
 
 @app.route("/api/jobs", methods=["GET"])
 def api_get_jobs():
-    """
-    Пагинация примитивная:
-      - limit (по умолчанию 50)
-      - archived=true/false
-    """
     try:
         limit = int(request.args.get("limit") or "50")
     except Exception:
@@ -333,12 +321,6 @@ def api_archive_job(job_id: int):
 
 @app.route("/check_access", methods=["POST"])
 def check_access():
-    """
-    Миниапп присылает { user_id, username }.
-    Разрешаем:
-      - если username в ADMINS
-      - или если username есть в allowed_users (таблица)
-    """
     data = request.get_json(silent=True) or {}
     user_id = data.get("user_id")
     username = data.get("username")
@@ -655,7 +637,6 @@ def api_admin_update_fb_cookies_dynamic():
     if not raw:
         return jsonify({"error": "cookie_kv_required"}), 400
 
-    # Разбираем строку вида "k1=v1; k2=v2" (переводы строк считаем как разделители).
     mapping = {}
     for part in raw.replace("\n", ";").split(";"):
         part = part.strip()
