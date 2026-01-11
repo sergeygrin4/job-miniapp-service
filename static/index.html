@@ -120,6 +120,7 @@
       font-size: 14px;
       padding: 7px 12px;
       cursor: pointer;
+      white-space: nowrap;
     }
 
     .btn:hover { background: var(--btn-hover); }
@@ -144,6 +145,7 @@
 
     .btn-danger {
       background: var(--danger);
+      color: #fff;
     }
 
     .job {
@@ -201,6 +203,7 @@
 
     .list-main { font-size: 14px; }
     .list-meta { font-size: 12px; color: var(--muted); }
+    .list-meta span { word-break: break-all; }
 
     .text-right { text-align: right; }
 
@@ -289,8 +292,9 @@
           <p class="muted" style="margin-top:4px;">
             1) Один раз сохрани <b>полный JSON</b> cookies, который даёт Apify.<br/>
             2) Дальше обычно меняются только значения (например <code>c_user</code>, <code>xs</code>, <code>fr</code>) —
-            их можно вставлять ниже строкой <code>key=value; key2=value2</code>.
+            ниже можно обновлять только их.
           </p>
+
           <label>Полный JSON cookies (при первичной настройке или если структура поменялась)</label>
           <textarea id="fb-cookies-json" placeholder='[{"key":"c_user","value":"..."}, ...]'></textarea>
           <div style="margin-top:6px;">
@@ -299,9 +303,32 @@
 
           <hr/>
 
-          <label>Динамичные cookie (формат: <code>c_user=...; xs=...; fr=...</code>)</label>
-          <textarea id="fb-cookies-dynamic" placeholder="c_user=...; xs=...; fr=..."></textarea>
-          <div style="margin-top:6px;">
+          <label>Динамичные cookie</label>
+          <p class="muted" style="margin-top:2px;">
+            Сюда можно вставлять только текущие значения из браузера — мы подменим их в сохранённом JSON.
+          </p>
+
+          <div class="row" style="margin-top:6px;">
+            <div class="col">
+              <label>c_user</label>
+              <input id="fb-cookies-c_user" placeholder="значение c_user" />
+            </div>
+            <div class="col">
+              <label>xs</label>
+              <input id="fb-cookies-xs" placeholder="значение xs" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:6px;">
+            <div class="col">
+              <label>fr</label>
+              <input id="fb-cookies-fr" placeholder="значение fr" />
+            </div>
+            <div class="col">
+              <label>datr (опционально)</label>
+              <input id="fb-cookies-datr" placeholder="значение datr" />
+            </div>
+          </div>
+          <div style="margin-top:8px;">
             <button class="btn btn-secondary" id="fb-cookies-dynamic-btn">Обновить значения cookies</button>
           </div>
         </div>
@@ -484,7 +511,7 @@
         $("main").classList.remove("hidden");
 
         loadJobs(false);
-        loadJobs(true);  // предварительно подгружаем и архив
+        loadJobs(true);  // архив
         loadGroups();
         if (state.isAdmin) {
           loadAllowedUsers();
@@ -601,7 +628,7 @@
                       <span>${enabled ? "Включено" : "Выключено"}</span>
                     </label>
                   </div>
-                  ${state.isAdmin ? `<button class="btn btn-outline btn-danger" style="margin-top:6px;" data-action="delete" data-id="${id}">Удалить</button>` : ""}
+                  ${state.isAdmin ? `<button class="btn btn-danger" style="margin-top:6px;" data-action="delete" data-id="${id}">Удалить</button>` : ""}
                 </div>
               </div>
             </div>`;
@@ -679,16 +706,29 @@
     }
 
     async function saveFbCookiesDynamic() {
-      const raw = $("fb-cookies-dynamic").value.trim();
-      if (!raw) {
-        showFlash("Вставь строку вида c_user=...; xs=...; fr=...", true);
+      const c_user = $("fb-cookies-c_user").value.trim();
+      const xs    = $("fb-cookies-xs").value.trim();
+      const fr    = $("fb-cookies-fr").value.trim();
+      const datr  = $("fb-cookies-datr").value.trim();
+
+      const parts = [];
+      if (c_user) parts.push("c_user=" + c_user);
+      if (xs)     parts.push("xs=" + xs);
+      if (fr)     parts.push("fr=" + fr);
+      if (datr)   parts.push("datr=" + datr);
+
+      if (!parts.length) {
+        showFlash("Введи хотя бы одно значение cookie (c_user/xs/fr/datr)", true);
         return;
       }
+
+      const cookie_kv = parts.join("; ");
+
       try {
         await apiFetch("/api/admin/fb_cookies_dynamic", {
           method: "POST",
           admin: true,
-          body: { cookie_kv: raw },
+          body: { cookie_kv },
         });
         showFlash("Динамичные значения cookies обновлены");
       } catch (e) {
@@ -782,7 +822,7 @@
                 </div>
               </div>
               <div>
-                <button class="btn btn-outline btn-danger" data-id="${u.id}">Удалить</button>
+                <button class="btn btn-danger" data-id="${u.id}">Удалить</button>
               </div>
             </div>`;
         }).join("");
