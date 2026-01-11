@@ -210,79 +210,212 @@ def check_access():
     return jsonify({"access_granted": False, "is_admin": False})
 
 
-# ---------------- Jobs ----------------
+# ---------------- Groups API ----------------
 
-@app.route("/post", methods=["POST"])
-def receive_post():
-    if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
-        return jsonify({"error": "forbidden"}), 403
+@app.route("/api/groups", methods=["GET"])
+def api_get_groups():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, group_id, group_name, enabled, added_at FROM fb_groups ORDER BY id DESC"
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    groups = []
+    for r in rows:
+        groups.append(
+            {
+                "id": r["id"],
+                "group_id": r["group_id"],
+                "group_name": r.get("group_name"),
+                "enabled": r.get("enabled", True),
+                "added_at": _iso(r.get("added_at")),
+            }
+        )
+    return jsonify({"groups": groups})
+
+
+@app.route("/api/groups", methods=["POST"])
+def api_add_group():
+    admin, err = _require_admin()
+    if err:
+        return err
 
     data = request.get_json(silent=True) or {}
+    group_id = (data.get("group_id") or "").strip()
+    group_name = (data.get("group_name") or "").strip()
 
-    source = (data.get("source") or "").strip()
-    external_id = (data.get("external_id") or "").strip()
-    text = (data.get("text") or "").strip()
-
-    if not source or not external_id or not text:
-        return jsonify({"error": "source/external_id/text required"}), 400
-
-    source_name = data.get("source_name")
-    url = data.get("url")
-    sender_username = data.get("sender_username")
-    created_at = data.get("created_at")
-
-    def _parse_dt(v):
-        if not v:
-            return None
-        try:
-            if isinstance(v, str):
-                return datetime.fromisoformat(v.replace("Z", "+00:00"))
-        except Exception:
-            return None
-        return None
-
-    created_dt = _parse_dt(created_at)
+    if not group_id:
+        return jsonify({"error": "group_id required"}), 400
 
     conn = get_conn()
     cur = conn.cursor()
 
-    try:
-        cur.execute(
-            """
-            INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (external_id, source) DO NOTHING
-            RETURNING id
-            """,
-            (source, source_name, external_id, url, text, sender_username, created_dt),
-        )
-        row = cur.fetchone()
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        return jsonify({"error": str(e)}), 500
-
+    cur.execute(
+        """
+        INSERT INTO fb_groups (group_id, group_name, enabled, added_at)
+        VALUES (%s, %s, TRUE, NOW())
+        ON CONFLICT (group_id) DO UPDATE SET
+            group_name = EXCLUDED.group_name,
+            enabled = TRUE
+        RETURNING id, group_id, group_name, enabled, added_at
+        """,
+        (group_id, group_name or None),
+    )
+    row = cur.fetchone()
+    conn.commit()
     conn.close()
-    return jsonify({"status": "ok", "inserted": bool(row)})
+
+    return jsonify({"status": "ok", "group": row})
 
 
-@app.route("/api/jobs", methods=["GET"])
-def list_jobs():
-    archived = request.args.get("archived") == "1"
-    limit = int(request.args.get("limit") or "100")
+@app.route("/api/groups/<int:group_db_id>", methods=["DELETE"])
+def api_delete_group(group_db_id: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM fb_groups WHERE id = %s", (group_db_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "deleted"})
+
+
+@app.route("/api/groups/<int:group_db_id>/toggle", methods=["POST"])
+def api_toggle_group(group_db_id: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled", True))
 
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT *
-        FROM jobs
-        WHERE archived = %s
-        ORDER BY received_at DESC
-        LIMIT %s
+        UPDATE fb_groups
+        SET enabled = %s
+        WHERE id = %s
+        RETURNING id, group_id, group_name, enabled, added_at
         """,
-        (archived, limit),
+        (enabled, group_db_id),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "group": row})
+
+
+# ---------------- Jobs API ----------------
+
+def _clean_text(text: str) -> str:
+    text = (text or "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+@app.route("/post", methods=["POST"])
+def add_job():
+    data = request.get_json(silent=True) or {}
+    source = (data.get("source") or "").strip()
+    source_name = (data.get("source_name") or "").strip()
+    external_id = (data.get("external_id") or "").strip()
+    url = (data.get("url") or "").strip()
+    text = (data.get("text") or "").strip()
+    sender_username = (data.get("sender_username") or "").strip()
+    created_at = data.get("created_at")
+
+    if not source or not external_id or not text:
+        return jsonify({"error": "source, external_id, text required"}), 400
+
+    text = _clean_text(text)
+
+    # created_at may be iso string
+    created_dt = None
+    if created_at:
+        try:
+            # normalize Z
+            if isinstance(created_at, str) and created_at.endswith("Z"):
+                created_at = created_at[:-1] + "+00:00"
+            created_dt = datetime.fromisoformat(created_at)
+        except Exception:
+            created_dt = None
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at, received_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (external_id, source) DO NOTHING
+            RETURNING id
+            """,
+            (
+                source,
+                source_name or None,
+                external_id,
+                url or None,
+                text,
+                sender_username or None,
+                created_dt,
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+
+    if row:
+        return jsonify({"status": "ok", "inserted": True, "id": row["id"]})
+    return jsonify({"status": "ok", "inserted": False})
+
+
+@app.route("/api/jobs", methods=["GET"])
+def api_list_jobs():
+    """
+    Параметры:
+      - limit (по умолчанию 50)
+      - offset (по умолчанию 0)
+      - archived: "true"/"false" (по умолчанию false)
+      - q: поиск по тексту (ILIKE)
+      - source: фильтр по source
+    """
+    limit = int(request.args.get("limit") or 50)
+    offset = int(request.args.get("offset") or 0)
+    archived = (request.args.get("archived") or "false").lower() == "true"
+    q = (request.args.get("q") or "").strip()
+    source = (request.args.get("source") or "").strip()
+
+    where = ["archived = %s"]
+    params = [archived]
+
+    if q:
+        where.append("text ILIKE %s")
+        params.append(f"%{q}%")
+
+    if source:
+        where.append("source = %s")
+        params.append(source)
+
+    where_sql = " AND ".join(where)
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT id, source, source_name, external_id, url, text, sender_username, created_at, received_at, archived, archived_at
+        FROM jobs
+        WHERE {where_sql}
+        ORDER BY received_at DESC
+        LIMIT %s OFFSET %s
+        """,
+        (*params, limit, offset),
     )
     rows = cur.fetchall()
     conn.close()
@@ -296,11 +429,11 @@ def list_jobs():
                 "source_name": r.get("source_name"),
                 "external_id": r["external_id"],
                 "url": r.get("url"),
-                "text": r.get("text"),
+                "text": r["text"],
                 "sender_username": r.get("sender_username"),
                 "created_at": _iso(r.get("created_at")),
                 "received_at": _iso(r.get("received_at")),
-                "archived": r.get("archived", False),
+                "archived": bool(r.get("archived")),
                 "archived_at": _iso(r.get("archived_at")),
             }
         )
@@ -308,194 +441,69 @@ def list_jobs():
     return jsonify({"jobs": jobs})
 
 
-@app.route("/api/archive", methods=["POST"])
-def archive_job():
+@app.route("/api/jobs/<int:job_id>/archive", methods=["POST"])
+def api_archive_job(job_id: int):
     admin, err = _require_admin()
     if err:
         return err
 
     data = request.get_json(silent=True) or {}
-    job_id = data.get("job_id")
     archived = bool(data.get("archived", True))
-
-    if not job_id:
-        return jsonify({"error": "job_id required"}), 400
 
     conn = get_conn()
     cur = conn.cursor()
     if archived:
         cur.execute(
-            "UPDATE jobs SET archived = TRUE, archived_at = NOW() WHERE id = %s",
+            """
+            UPDATE jobs
+            SET archived = TRUE, archived_at = NOW()
+            WHERE id = %s
+            """,
             (job_id,),
         )
     else:
         cur.execute(
-            "UPDATE jobs SET archived = FALSE, archived_at = NULL WHERE id = %s",
+            """
+            UPDATE jobs
+            SET archived = FALSE, archived_at = NULL
+            WHERE id = %s
+            """,
             (job_id,),
         )
     conn.commit()
     conn.close()
+
     return jsonify({"status": "ok"})
 
 
-# ---------------- Groups ----------------
-
-@app.route("/api/groups", methods=["GET"])
-def api_groups():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT id, group_id, group_name, enabled, added_at
-        FROM fb_groups
-        WHERE enabled = TRUE
-        ORDER BY id
-        """
-    )
-    rows = cur.fetchall()
-    conn.close()
-
-    groups = []
-    for row in rows:
-        groups.append(
-            {
-                "id": row["id"],
-                "group_id": row["group_id"],
-                "group_name": row.get("group_name") or row["group_id"],
-                "enabled": row.get("enabled", True),
-                "added_at": _iso(row.get("added_at")),
-            }
-        )
-
-    return jsonify({"groups": groups})
-
+# ---------------- FB groups dedicated endpoint (for fb parser) ----------------
 
 @app.route("/api/fb_groups", methods=["GET"])
 def api_fb_groups():
-    """
-    Отдаём FB группы для FB парсера.
-    Формат:
-    { "groups": [ { "group_url": "...", "enabled": true, ... }, ... ] }
-    """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        """
-        SELECT id, group_id, group_name, enabled, added_at
-        FROM fb_groups
-        WHERE group_id LIKE 'http%%facebook.com%%'
-           OR group_id LIKE 'https://www.facebook.com%%'
-           OR group_id LIKE '%facebook.com/groups/%'
-        ORDER BY id
-        """
+        "SELECT id, group_id, group_name, enabled, added_at FROM fb_groups ORDER BY id DESC"
     )
     rows = cur.fetchall()
     conn.close()
 
     groups = []
-    for row in rows:
+    for r in rows:
         groups.append(
             {
-                "id": row["id"],
-                "group_url": row["group_id"],
-                "group_name": row.get("group_name") or row["group_id"],
-                "enabled": row.get("enabled", True),
-                "added_at": _iso(row.get("added_at")),
+                "id": r["id"],
+                "group_id": r["group_id"],
+                "group_name": r.get("group_name"),
+                "group_url": r["group_id"],  # fb parser ожидает group_url
+                "enabled": r.get("enabled", True),
+                "added_at": _iso(r.get("added_at")),
             }
         )
     return jsonify({"groups": groups})
 
 
-# ---------------- Управление источниками (TG/FB) ----------------
-
-@app.route("/api/source", methods=["POST"])
-def add_source():
-    admin, err = _require_admin()
-    if err:
-        return err
-
-    """
-    Добавление нового источника (TG канал или FB группа).
-    Тело:
-    {
-      "group_id": "https://t.me/...",
-      "group_name": "Название" (опционально)
-    }
-    """
-    data = request.get_json(silent=True) or {}
-    group_id = (data.get("group_id") or "").strip()
-    group_name = (data.get("group_name") or "").strip()
-
-    if not group_id:
-        return jsonify({"error": "group_id is required"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO fb_groups (group_id, group_name, enabled)
-            VALUES (%s, %s, TRUE)
-            ON CONFLICT (group_id) DO UPDATE SET
-              group_name = EXCLUDED.group_name,
-              enabled = TRUE
-            RETURNING id, group_id, group_name, enabled, added_at
-            """,
-            (group_id, group_name or group_id),
-        )
-        row = cur.fetchone()
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        return jsonify({"error": str(e)}), 500
-
-    conn.close()
-    return jsonify({"status": "ok", "group": row})
-
-
-@app.route("/api/source/toggle", methods=["POST"])
-def toggle_source():
-    admin, err = _require_admin()
-    if err:
-        return err
-
-    data = request.get_json(silent=True) or {}
-    group_id = (data.get("group_id") or "").strip()
-    enabled = bool(data.get("enabled", True))
-
-    if not group_id:
-        return jsonify({"error": "group_id is required"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("UPDATE fb_groups SET enabled = %s WHERE group_id = %s", (enabled, group_id))
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "ok"})
-
-
-@app.route("/api/source/delete", methods=["POST"])
-def delete_source():
-    admin, err = _require_admin()
-    if err:
-        return err
-
-    data = request.get_json(silent=True) or {}
-    group_id = (data.get("group_id") or "").strip()
-
-    if not group_id:
-        return jsonify({"error": "group_id is required"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM fb_groups WHERE group_id = %s", (group_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "ok"})
-
-
-# ---------------- Allowed users (admin) ----------------
+# ---------------- Allowed users (admin UI) ----------------
 
 @app.route("/api/allowed_users", methods=["GET"])
 def list_allowed_users():
@@ -505,7 +513,7 @@ def list_allowed_users():
 
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id, username, user_id, updated_at FROM allowed_users ORDER BY id;")
+    cur.execute("SELECT id, username, user_id, updated_at FROM allowed_users ORDER BY id DESC")
     rows = cur.fetchall()
     conn.close()
 
@@ -826,6 +834,112 @@ def cron_fb_cookies_reminder():
         return jsonify({"status": "alert_sent", "age_days": age_days})
 
     return jsonify({"status": "ok", "age_days": age_days})
+
+
+# ---------------- Cron: parsers watchdog (Railway Scheduled Jobs) ----------------
+
+WATCHDOG_TG_MAX_AGE_MINUTES = int(os.getenv("WATCHDOG_TG_MAX_AGE_MINUTES", "20"))
+WATCHDOG_FB_MAX_AGE_MINUTES = int(os.getenv("WATCHDOG_FB_MAX_AGE_MINUTES", "40"))
+WATCHDOG_ALERT_COOLDOWN_MINUTES = int(os.getenv("WATCHDOG_ALERT_COOLDOWN_MINUTES", "180"))
+
+
+def _parse_iso_dt(s: str) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        ss = str(s).strip()
+        if ss.endswith("Z"):
+            ss = ss[:-1] + "+00:00"
+        dt = datetime.fromisoformat(ss)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _cooldown_ok(key: str, now_utc: datetime) -> bool:
+    last = get_status(key)
+    if not last or not last.get("value"):
+        return True
+    dt = _parse_iso_dt(last["value"])
+    if not dt:
+        return True
+    age_min = (now_utc - dt).total_seconds() / 60.0
+    return age_min >= WATCHDOG_ALERT_COOLDOWN_MINUTES
+
+
+def _mark_alert(key: str, now_utc: datetime):
+    set_status(key, now_utc.isoformat().replace("+00:00", "Z"))
+
+
+@app.route("/cron/parsers_watchdog", methods=["POST", "GET"])
+def cron_parsers_watchdog():
+    """
+    Watchdog:
+      - Проверяет, что парсеры живы (по ключам fb_last_ok / tg_last_ok).
+      - Проверяет, что TG не требует ре-авторизацию (tg_auth_required == true).
+    Если что-то не так — шлём алерт админу.
+    """
+    if CRON_SECRET:
+        provided = request.args.get("secret") or request.headers.get("X-CRON-KEY")
+        if provided != CRON_SECRET:
+            return jsonify({"error": "forbidden"}), 403
+
+    now_utc = datetime.now(timezone.utc)
+
+    # --- TG auth required ---
+    tg_auth = get_status("tg_auth_required")
+    tg_auth_required = (tg_auth or {}).get("value") == "true"
+    if tg_auth_required and _cooldown_ok("watchdog_last_alert_tg_auth", now_utc):
+        send_alert_human(
+            "🚨 Telegram: похоже, выбило из аккаунта / сессия не авторизована.\\n"
+            "Открой миниапп → ⚙️ Настройки → Аккаунты → Telegram → \"Отправить код\" и подтверди код."
+        )
+        _mark_alert("watchdog_last_alert_tg_auth", now_utc)
+
+    # --- TG alive ---
+    tg_last = get_status("tg_last_ok")
+    tg_last_dt = _parse_iso_dt((tg_last or {}).get("value") or "")
+    tg_age_min = None
+    tg_down = False
+    if not tg_last_dt:
+        tg_down = True
+    else:
+        tg_age_min = (now_utc - tg_last_dt).total_seconds() / 60.0
+        tg_down = tg_age_min > WATCHDOG_TG_MAX_AGE_MINUTES
+
+    if tg_down and _cooldown_ok("watchdog_last_alert_tg_down", now_utc):
+        send_alert_human(
+            "⚠️ Telegram парсер давно не пинговал статус (tg_last_ok).\\n"
+            "Возможно, упал процесс/railway. Проверь логи TG сервиса."
+        )
+        _mark_alert("watchdog_last_alert_tg_down", now_utc)
+
+    # --- FB alive (если парсер пингует fb_last_ok) ---
+    fb_last = get_status("fb_last_ok")
+    fb_last_dt = _parse_iso_dt((fb_last or {}).get("value") or "")
+    fb_age_min = None
+    fb_down = False
+    if fb_last_dt:
+        fb_age_min = (now_utc - fb_last_dt).total_seconds() / 60.0
+        fb_down = fb_age_min > WATCHDOG_FB_MAX_AGE_MINUTES
+
+    if fb_down and _cooldown_ok("watchdog_last_alert_fb_down", now_utc):
+        send_alert_human(
+            "⚠️ Facebook парсер давно не пинговал статус (fb_last_ok).\\n"
+            "Возможно, упал процесс/railway. Проверь логи FB сервиса."
+        )
+        _mark_alert("watchdog_last_alert_fb_down", now_utc)
+
+    return jsonify(
+        {
+            "status": "ok",
+            "now": now_utc.isoformat(),
+            "tg": {"auth_required": tg_auth_required, "age_minutes": tg_age_min, "down": tg_down},
+            "fb": {"age_minutes": fb_age_min, "down": fb_down if fb_last_dt else None},
+        }
+    )
 
 
 @app.route("/")
