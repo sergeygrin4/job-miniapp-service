@@ -72,8 +72,8 @@ def init_db():
         );
     """)
 
-
-        cur.execute("""
+    # Хранилище секретов для парсеров (FB cookies, TG StringSession и т.п.)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS parser_secrets (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
@@ -94,82 +94,7 @@ def init_db():
     conn.close()
 
 
-# ---------- Методы для TG и FB групп ----------
+# ---------- Secrets / Status helpers ----------
 
-def get_all_groups():
-    """Отдаёт всё — и FB, и TG. TG определяется по t.me."""
+def get_secret(key: str):
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM fb_groups ORDER BY id;")
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-def get_tg_groups():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT * FROM fb_groups
-        WHERE group_id LIKE 'http%%t.me%%' OR group_id LIKE 't.me%%'
-        ORDER BY id;
-    """)
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-def get_fb_groups():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT * FROM fb_groups
-        WHERE group_id LIKE 'http%%facebook.com%%'
-           OR group_id LIKE 'https://www.facebook.com%%'
-           OR group_id LIKE '%facebook.com/groups/%'
-        ORDER BY id;
-    """)
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-def add_group(group_id, group_name):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO fb_groups (group_id, group_name)
-        VALUES (%s, %s)
-        ON CONFLICT (group_id) DO UPDATE SET
-            group_name = EXCLUDED.group_name;
-    """, (group_id, group_name))
-    conn.commit()
-    conn.close()
-
-
-def disable_group(group_id):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE fb_groups SET enabled = FALSE WHERE group_id = %s;
-    """, (group_id,))
-    conn.commit()
-    conn.close()
-
-
-def enable_group(group_id):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE fb_groups SET enabled = TRUE WHERE group_id = %s;
-    """, (group_id,))
-    conn.commit()
-    conn.close()
-
-
-def delete_group(group_id):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM fb_groups WHERE group_id = %s;", (group_id,))
-    conn.commit()
-    conn.close()
