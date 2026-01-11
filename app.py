@@ -1,77 +1,62 @@
+import os
+import re
 import json
 import hmac
 import hashlib
-from urllib.parse import parse_qsl
 import asyncio
+import logging
+import requests
+from urllib.parse import parse_qsl
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from flask import Flask, request, jsonify, send_from_directory
-
-from db import get_conn, init_db, get_secret, set_secret, get_status, set_status
+from flask_cors import CORS
+from telegram import Bot
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
 
-# ---------------- Логирование ----------------
+from db import get_conn, init_db, get_secret, set_secret, get_status, set_status
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger("mini_app_bot")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("miniapp")
 
-
-# ---------------- Конфиг из окружения ----------------
+app = Flask(__name__, static_folder="static", static_url_path="")
+CORS(app)
 
 PORT = int(os.getenv("PORT", "8080"))
 
-# Секрет для авторизации парсеров (tg_parser, fb_parser)
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or ""
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+ADMINS_RAW = os.getenv("ADMINS", "")
+
 API_SECRET = os.getenv("API_SECRET", "")
 
-# Мини-админы (username в Telegram, без @), которым всегда разрешён доступ и которые считаются администраторами
-# через ENV, например: "opsifd,another_admin"
-ADMINS_RAW = os.getenv("ADMINS", "")
-ADMINS = {u.strip().lower().lstrip("@") for u in ADMINS_RAW.split(",") if u.strip()}
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# Модель OpenAI (если включён AI-фильтр)
-AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-mini")
+bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 
-# Нужен ли AI-фильтр для вакансий
-USE_AI_FILTER = os.getenv("USE_AI_FILTER", "true").lower() in ("1", "true", "yes")
+ADMINS = set()
+for a in (ADMINS_RAW or "").split(","):
+    a = a.strip()
+    if a:
+        ADMINS.add(a.lstrip("@").lower())
 
-
-# ---------------- Flask-приложение ----------------
-
-app = Flask(__name__, static_folder="static", static_url_path="")
-
-
-# ---------------- Утилиты ----------------
-
-def _iso(dt: Optional[datetime]) -> Optional[str]:
-    if not dt:
-        return None
-    return dt.isoformat()
-
+# ---------------- Helper ----------------
 
 def _username_norm(username: Optional[str]) -> Optional[str]:
-    """
-    Нормализуем username:
-    - срезаем пробелы
-    - убираем @ в начале
-    - приводим к lower
-    """
     if not username:
         return None
-    return username.strip().lstrip("@").lower() or None
+    return username.strip().lstrip("@").lower()
 
 
 def is_admin(username_norm: Optional[str]) -> bool:
-    """
-    Проверка, является ли пользователь админом по username (из ENV).
-    """
     if not username_norm:
         return False
     return username_norm in ADMINS
+
 
 # ---------------- Telegram WebApp auth (initData) ----------------
 
@@ -129,7 +114,7 @@ def _get_admin_from_request() -> Optional[dict]:
     except Exception:
         return None
 
-    username_norm = (user_obj.get("username") or "").strip().lstrip("@").lower() or None
+    username_norm = _username_norm(user_obj.get("username"))
     if not is_admin(username_norm):
         return None
 
@@ -149,403 +134,230 @@ def _require_admin():
     return admin, None
 
 
-
-def is_user_in_db(username_norm: Optional[str]) -> bool:
-    """
-    Проверка, есть ли пользователь в allowed_users.
-    """
-    if not username_norm:
-        return False
-    conn = get_conn()
-    cur = conn.cursor()
+def _iso(dt):
+    if not dt:
+        return None
     try:
-        cur.execute(
-            """
-            SELECT 1 FROM allowed_users
-            WHERE username = %s
-            LIMIT 1
-            """,
-            (username_norm,),
-        )
-        row = cur.fetchone()
-        return row is not None
-    except Exception as e:
-        logger.error("Ошибка проверки allowed_user: %s", e)
-        return False
-    finally:
-        conn.close()
+        return dt.isoformat()
+    except Exception:
+        return None
 
 
-def is_user_allowed(username_norm: Optional[str]) -> bool:
-    """
-    Пользователь допускается в миниапп, если он:
-    - админ, или
-    - есть в allowed_users.
-    """
-    if not username_norm:
-        return False
-    if username_norm in ADMINS:
-        return True
-    return is_user_in_db(username_norm)
+# ---------------- Alerts ----------------
 
-
-def upsert_allowed_user(username_norm: str, user_id: Optional[int]):
-    """
-    Сохраняем/обновляем пользователя в таблице allowed_users,
-    когда он открывает миниапп или когда он уже есть в админке.
-    """
-    if not username_norm:
+def send_alert_human(text: str):
+    if not bot or not ADMIN_CHAT_ID:
+        logger.warning("No bot/admin chat configured, alert skipped: %s", text)
         return
 
-    conn = get_conn()
-    cur = conn.cursor()
     try:
-        cur.execute(
-            """
-            INSERT INTO allowed_users (username, user_id, updated_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (username) DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                updated_at = EXCLUDED.updated_at
-            """,
-            (username_norm, user_id),
-        )
-        conn.commit()
+        bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
     except Exception as e:
-        conn.rollback()
-        logger.error("Ошибка upsert allowed_user: %s", e)
-    finally:
-        conn.close()
-
-
-def load_allowed_user_ids_from_db() -> List[int]:
-    """
-    Читаем user_id из таблицы allowed_users.
-    Это те пользователи, которые:
-    1) выданы через админку (allowed_users)
-    2) хотя бы раз открыли миниапп (мы сохранили их user_id)
-    """
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT DISTINCT user_id
-            FROM allowed_users
-            WHERE user_id IS NOT NULL
-            """
-        )
-        rows = cur.fetchall()
-        conn.close()
-    except Exception as e:
-        logger.error("Не удалось загрузить allowed_users из БД: %s", e)
-        return []
-
-    ids: List[int] = []
-    for row in rows:
-        uid = row.get("user_id")
-        if uid is None:
-            continue
-        try:
-            ids.append(int(uid))
-        except (TypeError, ValueError):
-            continue
-    return ids
-
-
-# ---------------- AI-фильтр (OpenAI) ----------------
-
-def is_relevant_job(text: str) -> bool:
-    """
-    AI-фильтр: определяет, является ли текст вакансией / предложением работы.
-    Если USE_AI_FILTER=False, всегда возвращает True.
-    Здесь ты уже подключаешь openai.ChatCompletion и т.п. (не приводится целиком, т.к. логика была настроена ранее).
-    """
-    if not USE_AI_FILTER:
-        return True
-
-    # Здесь должна быть твоя актуальная реализация с openai.
-    # Я оставляю заглушку, чтобы не ломать существующую интеграцию.
-    try:
-        from openai import OpenAI
-        client = OpenAI()
-
-        prompt = (
-            "You are a filter that checks if a text describes a job vacancy or job offer. "
-            "Answer ONLY 'YES' or 'NO'."
-        )
-
-        resp = client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text[:4000]},
-            ],
-            max_tokens=1,
-            temperature=0,
-        )
-        answer = (resp.choices[0].message.content or "").strip().upper()
-        relevant = answer.startswith("YES") or answer.startswith("Y")
-        logger.info("AI-фильтр: %s -> %s", answer, "relevant" if relevant else "irrelevant")
-        return relevant
-    except Exception as e:
-        logger.error("Ошибка AI-фильтра: %s", e)
-        # В случае ошибки не блокируем вакансии
-        return True
-
-
-# ---------------- Healthcheck ----------------
-
-
-@app.route("/healthz", methods=["GET"])
-def healthz():
-    return jsonify({"status": "ok"})
-
-
-# ---------------- Системные алерты от парсеров (TG/FB) ----------------
+        logger.error("Failed to send alert: %s", e)
 
 
 @app.route("/api/alert", methods=["POST"])
 def api_alert():
-    """
-    Эндпоинт для системных уведомлений от парсеров.
-
-    Авторизация:
-      - Заголовок X-API-KEY == API_SECRET (если API_SECRET задан)
-      - Для обратной совместимости также принимаем X-API-SECRET
-
-    Тело JSON:
-    {
-      "source": "tg_parser" | "fb_parser" | "...",
-      "message": "..."
-    }
-    """
-    if API_SECRET:
-        key = request.headers.get("X-API-KEY")
-        legacy = request.headers.get("X-API-SECRET")
-        if key != API_SECRET and legacy != API_SECRET:
-            return jsonify({"error": "forbidden"}), 403
+    if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
+        return jsonify({"error": "forbidden"}), 403
 
     data = request.get_json(silent=True) or {}
-    source = (data.get("source") or "unknown").strip()
-    message = (data.get("message") or "").strip()
-    if not message:
+    src = data.get("source") or "unknown"
+    msg = data.get("message") or ""
+    if not msg:
         return jsonify({"error": "message_required"}), 400
 
-    text = f"Источник: {source}\n\n{message}"
-    logger.warning("ALERT from %s: %s", source, message)
-
-    try:
-        send_alert_human(text)
-    except Exception as e:
-        logger.error("Ошибка отправки алерта в Telegram: %s", e)
-
+    send_alert_human(f"🔔 {src}:\n{msg}")
     return jsonify({"status": "ok"})
 
 
+# ---------------- Access check ----------------
 
-# ---------------- Проверка доступа к миниаппу ----------------
-
-
-@app.route("/api/check_access", methods=["POST"])
+@app.route("/check_access", methods=["POST"])
 def check_access():
     """
-    Принимает user_id и username из Telegram WebApp и говорит, можно ли пускать пользователя.
-    Ожидаем тело:
-    {
-      "user_id": 123456789,
-      "username": "DemySkWear"
-    }
+    Миниапп присылает { user_id, username }.
+    Разрешаем:
+      - если username в ADMINS
+      - или если username есть в allowed_users (таблица)
     """
     data = request.get_json(silent=True) or {}
-    user_id_raw = data.get("user_id")
-    username_raw = data.get("username")  # может быть None
+    user_id = data.get("user_id")
+    username = data.get("username")
 
-    username_norm = _username_norm(username_raw)
-    allowed = is_user_allowed(username_norm)
-    admin_flag = is_admin(username_norm)
+    username_norm = _username_norm(username)
 
-    logger.info(
-        "check_access: username_raw=%r norm=%r allowed=%s admin=%s ADMINS=%r",
-        username_raw,
-        username_norm,
-        allowed,
-        admin_flag,
-        ADMINS,
-    )
+    if is_admin(username_norm):
+        return jsonify({"access_granted": True, "is_admin": True})
 
-    # Аккуратно приводим user_id к int (если он есть)
-    user_id_int: Optional[int] = None
-    try:
-        if user_id_raw is not None:
-            user_id_int = int(user_id_raw)
-    except (TypeError, ValueError):
-        user_id_int = None
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, user_id FROM allowed_users WHERE username = %s", (username_norm,))
+    row = cur.fetchone()
 
-    # Если юзер допущен и есть нормальный username — сохраняем/обновляем его в allowed_users
-    if allowed and username_norm:
-        upsert_allowed_user(username_norm, user_id_int)
-
-    return jsonify(
-        {
-            "allowed": allowed,
-            "is_admin": admin_flag,
-            "username": username_raw,
-            "normalized_username": username_norm,
-            "user_id": user_id_raw,
-        }
-    )
-
-
-
-
-# ---------------- Telegram уведомления (для парсеров) ----------------
-
-def send_notifications_to_users(text: str, link: Optional[str], chat_title: Optional[str], sender_username: Optional[str]):
-    """
-    Функция, которую можно вызывать после сохранения вакансии,
-    чтобы разослать уведомления пользователям через Telegram-бота.
-    Здесь у тебя уже была своя реализация, использующая TELEGRAM_BOT_TOKEN, и т.п.
-    Я оставляю существующий код (в репо он уже был), только оборачиваю.
-    """
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not TELEGRAM_BOT_TOKEN:
-        logger.info("TELEGRAM_BOT_TOKEN не задан, уведомления не отправляем")
-        return
-
-    user_ids = load_allowed_user_ids_from_db()
-    if not user_ids:
-        logger.info("Нет пользователей с user_id — уведомлять некого")
-        return
-
-    import requests
-
-    chat_title = chat_title or "Telegram канала"
-    short_text = (text or "").strip()
-
-    # Обрезаем текст для превью
-    if len(short_text) > 400:
-        short_text = short_text[:400] + "…"
-
-    # Основной текст уведомления
-    msg = (
-        f"📢 *Получена вакансия из группы:* _{chat_title}_\n\n"
-        f"📝 *Краткое описание:*\n{short_text}\n"
-    )
-
-    # Inline-кнопки
-    inline_keyboard = []
-
-    # Кнопка "Открыть пост"
-    if link:
-        inline_keyboard.append(
-            [
-                {"text": "🔗 Открыть пост", "url": link}
-            ]
-        )
-
-    # Кнопка "Написать автору" (для Telegram-источников)
-    if sender_username:
-        if not sender_username.startswith("@"):
-            sender_username_display = f"@{sender_username}"
-        else:
-            sender_username_display = sender_username
-        inline_keyboard.append(
-            [
-                {
-                    "text": "✉️ Написать автору",
-                    "url": f"https://t.me/{sender_username_display.lstrip('@')}",
-                }
-            ]
-        )
-
-    payload = {
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
-        "reply_markup": {"inline_keyboard": inline_keyboard} if inline_keyboard else None,
-    }
-
-    for user_id in user_ids:
-        try:
-            data = {
-                "chat_id": user_id,
-                "text": msg,
-                **payload,
-            }
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json=data,
-                timeout=10,
+    if row:
+        if user_id:
+            cur.execute(
+                "UPDATE allowed_users SET user_id = %s, updated_at = NOW() WHERE id = %s",
+                (user_id, row["id"]),
             )
-        except Exception as e:
-            logger.error("Ошибка отправки уведомления пользователю %s: %s", user_id, e)
+            conn.commit()
+
+        conn.close()
+        return jsonify({"access_granted": True, "is_admin": False})
+
+    conn.close()
+    return jsonify({"access_granted": False, "is_admin": False})
 
 
-def send_alert_human(text: str):
-    """
-    Дублирует системные ошибки в Telegram-чат
-    """
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not TELEGRAM_BOT_TOKEN:
-        logger.error("Нет TELEGRAM_BOT_TOKEN — алерт не отправлен")
-        return
+# ---------------- Jobs ----------------
 
-    user_ids = load_allowed_user_ids_from_db()
-    if not user_ids:
-        return
+@app.route("/post", methods=["POST"])
+def receive_post():
+    if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
+        return jsonify({"error": "forbidden"}), 403
 
-    for user_id in user_ids:
+    data = request.get_json(silent=True) or {}
+
+    source = (data.get("source") or "").strip()
+    external_id = (data.get("external_id") or "").strip()
+    text = (data.get("text") or "").strip()
+
+    if not source or not external_id or not text:
+        return jsonify({"error": "source/external_id/text required"}), 400
+
+    source_name = data.get("source_name")
+    url = data.get("url")
+    sender_username = data.get("sender_username")
+    created_at = data.get("created_at")
+
+    def _parse_dt(v):
+        if not v:
+            return None
         try:
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={
-                    "chat_id": user_id,
-                    "text": f"🚨 СИСТЕМНОЕ УВЕДОМЛЕНИЕ\n\n{text}",
-                    "disable_web_page_preview": True,
-                },
-                timeout=10,
-            )
-        except Exception as e:
-            logger.error("Ошибка отправки алерта: %s", e)
+            if isinstance(v, str):
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        return None
 
+    created_dt = _parse_dt(created_at)
 
+    conn = get_conn()
+    cur = conn.cursor()
 
-# ---------------- Список каналов (Telegram) ----------------
-
-
-@app.route("/api/channels", methods=["GET"])
-def list_channels():
-    """
-    Отдаём только Telegram-источники из fb_groups:
-    group_id ILIKE '%t.me/%' или group_id LIKE '@%'.
-    Используется фронтом (вкладка TG-каналы).
-    """
     try:
-        conn = get_conn()
-        cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, group_id, group_name, enabled, added_at
-            FROM fb_groups
-            WHERE group_id ILIKE '%t.me/%'
-               OR group_id LIKE '@%'
-            ORDER BY id ASC
-            """
+            INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (external_id, source) DO NOTHING
+            RETURNING id
+            """,
+            (source, source_name, external_id, url, text, sender_username, created_dt),
         )
-        rows = cur.fetchall()
-        conn.close()
+        row = cur.fetchone()
+        conn.commit()
     except Exception as e:
-        logger.error("Ошибка загрузки каналов: %s", e)
-        return jsonify({"channels": []})
+        conn.rollback()
+        conn.close()
+        return jsonify({"error": str(e)}), 500
 
-    def _iso(dt):
-        if not dt:
-            return None
-        return dt.isoformat()
+    conn.close()
+    return jsonify({"status": "ok", "inserted": bool(row)})
 
-    channels = []
+
+@app.route("/api/jobs", methods=["GET"])
+def list_jobs():
+    archived = request.args.get("archived") == "1"
+    limit = int(request.args.get("limit") or "100")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT *
+        FROM jobs
+        WHERE archived = %s
+        ORDER BY received_at DESC
+        LIMIT %s
+        """,
+        (archived, limit),
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    jobs = []
+    for r in rows:
+        jobs.append(
+            {
+                "id": r["id"],
+                "source": r["source"],
+                "source_name": r.get("source_name"),
+                "external_id": r["external_id"],
+                "url": r.get("url"),
+                "text": r.get("text"),
+                "sender_username": r.get("sender_username"),
+                "created_at": _iso(r.get("created_at")),
+                "received_at": _iso(r.get("received_at")),
+                "archived": r.get("archived", False),
+                "archived_at": _iso(r.get("archived_at")),
+            }
+        )
+
+    return jsonify({"jobs": jobs})
+
+
+@app.route("/api/archive", methods=["POST"])
+def archive_job():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    job_id = data.get("job_id")
+    archived = bool(data.get("archived", True))
+
+    if not job_id:
+        return jsonify({"error": "job_id required"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    if archived:
+        cur.execute(
+            "UPDATE jobs SET archived = TRUE, archived_at = NOW() WHERE id = %s",
+            (job_id,),
+        )
+    else:
+        cur.execute(
+            "UPDATE jobs SET archived = FALSE, archived_at = NULL WHERE id = %s",
+            (job_id,),
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
+
+
+# ---------------- Groups ----------------
+
+@app.route("/api/groups", methods=["GET"])
+def api_groups():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, group_id, group_name, enabled, added_at
+        FROM fb_groups
+        WHERE enabled = TRUE
+        ORDER BY id
+        """
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    groups = []
     for row in rows:
-        channels.append(
+        groups.append(
             {
                 "id": row["id"],
                 "group_id": row["group_id"],
@@ -555,54 +367,30 @@ def list_channels():
             }
         )
 
-    return jsonify({"channels": channels})
-
-
-# ---------------- Список FB-групп ----------------
+    return jsonify({"groups": groups})
 
 
 @app.route("/api/fb_groups", methods=["GET"])
-def list_fb_groups():
+def api_fb_groups():
     """
-    Отдаём только Facebook-группы из fb_groups:
-    group_id ILIKE '%facebook.com%' или '%fb.com%'.
-    Используется fb_parser и веб-интерфейс (вкладка Facebook).
-    Пример ответа:
-    {
-      "groups": [
-        {
-          "id": 1,
-          "group_url": "https://www.facebook.com/groups/....",
-          "group_name": "Название группы",
-          "enabled": true,
-          "added_at": "2025-12-01T12:34:56Z"
-        },
-        ...
-      ]
-    }
+    Отдаём FB группы для FB парсера.
+    Формат:
+    { "groups": [ { "group_url": "...", "enabled": true, ... }, ... ] }
     """
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, group_id, group_name, enabled, added_at
-            FROM fb_groups
-            WHERE group_id ILIKE '%facebook.com%'
-               OR group_id ILIKE '%fb.com%'
-            ORDER BY id ASC
-            """
-        )
-        rows = cur.fetchall()
-        conn.close()
-    except Exception as e:
-        logger.error("Ошибка загрузки FB-групп: %s", e)
-        return jsonify({"groups": []})
-
-    def _iso(dt):
-        if not dt:
-            return None
-        return dt.isoformat()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, group_id, group_name, enabled, added_at
+        FROM fb_groups
+        WHERE group_id LIKE 'http%%facebook.com%%'
+           OR group_id LIKE 'https://www.facebook.com%%'
+           OR group_id LIKE '%facebook.com/groups/%'
+        ORDER BY id
+        """
+    )
+    rows = cur.fetchall()
+    conn.close()
 
     groups = []
     for row in rows:
@@ -615,66 +403,16 @@ def list_fb_groups():
                 "added_at": _iso(row.get("added_at")),
             }
         )
-
-    return jsonify({"groups": groups})
-
-
-# ---------------- Совместимость для старых парсеров (/api/groups) ----------------
-
-
-@app.route("/api/groups", methods=["GET"])
-def list_groups_legacy():
-    """
-    Старый эндпоинт для парсеров.
-    Возвращает те же данные, что и /api/channels, но в виде {"groups": [...]}.
-    Используется tg_parser.
-    """
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, group_id, group_name, enabled, added_at
-            FROM fb_groups
-            WHERE group_id ILIKE '%t.me/%'
-               OR group_id LIKE '@%'
-            ORDER BY id ASC
-            """
-        )
-        rows = cur.fetchall()
-        conn.close()
-    except Exception as e:
-        logger.error("Ошибка загрузки legacy groups: %s", e)
-        return jsonify({"groups": []})
-
-    def _iso(dt):
-        if not dt:
-            return None
-        return dt.isoformat()
-
-    groups = []
-    for row in rows:
-        groups.append(
-            {
-                "id": row["id"],
-                "group_id": row["group_id"],
-                "group_name": row.get("group_name") or row["group_id"],
-                "enabled": row.get("enabled", True),
-                "added_at": _iso(row.get("added_at")),
-            }
-        )
-
     return jsonify({"groups": groups})
 
 
 # ---------------- Управление источниками (TG/FB) ----------------
 
-
 @app.route("/api/source", methods=["POST"])
 def add_source():
     admin, err = _require_admin()
-if err:
-    return err
+    if err:
+        return err
 
     """
     Добавление нового источника (TG канал или FB группа).
@@ -710,87 +448,39 @@ if err:
     except Exception as e:
         conn.rollback()
         conn.close()
-        logger.error("Ошибка добавления источника: %s", e)
-        return jsonify({"error": "db_error"}), 500
+        return jsonify({"error": str(e)}), 500
 
     conn.close()
-
-    def _iso(dt):
-        if not dt:
-            return None
-        return dt.isoformat()
-
-    return jsonify(
-        {
-            "id": row["id"],
-            "group_id": row["group_id"],
-            "group_name": row.get("group_name") or row["group_id"],
-            "enabled": row.get("enabled", True),
-            "added_at": _iso(row.get("added_at")),
-        }
-    )
+    return jsonify({"status": "ok", "group": row})
 
 
 @app.route("/api/source/toggle", methods=["POST"])
 def toggle_source():
     admin, err = _require_admin()
-if err:
-    return err
+    if err:
+        return err
 
-    """
-    Включение/выключение источника (TG/FB).
-    Тело:
-    {
-      "group_id": "https://t.me/...",
-      "enabled": true/false
-    }
-    """
     data = request.get_json(silent=True) or {}
     group_id = (data.get("group_id") or "").strip()
-    enabled = data.get("enabled")
+    enabled = bool(data.get("enabled", True))
 
     if not group_id:
         return jsonify({"error": "group_id is required"}), 400
-    if enabled is None:
-        return jsonify({"error": "enabled is required"}), 400
 
     conn = get_conn()
     cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            UPDATE fb_groups
-            SET enabled = %s
-            WHERE group_id = %s
-            """,
-            (bool(enabled), group_id),
-        )
-        updated = cur.rowcount
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        logger.error("Ошибка toggle источника: %s", e)
-        return jsonify({"error": "db_error"}), 500
-
+    cur.execute("UPDATE fb_groups SET enabled = %s WHERE group_id = %s", (enabled, group_id))
+    conn.commit()
     conn.close()
-    if updated == 0:
-        return jsonify({"error": "not_found"}), 404
     return jsonify({"status": "ok"})
 
 
 @app.route("/api/source/delete", methods=["POST"])
 def delete_source():
     admin, err = _require_admin()
-if err:
-    return err
-    """
-    Удаление источника.
-    Тело:
-    {
-      "group_id": "https://t.me/..."
-    }
-    """
+    if err:
+        return err
+
     data = request.get_json(silent=True) or {}
     group_id = (data.get("group_id") or "").strip()
 
@@ -799,439 +489,84 @@ if err:
 
     conn = get_conn()
     cur = conn.cursor()
-    try:
-        cur.execute("DELETE FROM fb_groups WHERE group_id = %s", (group_id,))
-        deleted = cur.rowcount
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        logger.error("Ошибка удаления источника: %s", e)
-        return jsonify({"error": "db_error"}), 500
-
+    cur.execute("DELETE FROM fb_groups WHERE group_id = %s", (group_id,))
+    conn.commit()
     conn.close()
-    if deleted == 0:
-        return jsonify({"error": "not_found"}), 404
-    return jsonify({"status": "deleted"})
+    return jsonify({"status": "ok"})
 
 
-# ---------------- Admin: allowed_users ----------------
-
+# ---------------- Allowed users (admin) ----------------
 
 @app.route("/api/allowed_users", methods=["GET"])
 def list_allowed_users():
     admin, err = _require_admin()
-if err:
-    return err
-    """
-    Список пользователей, которым выдан доступ через админку.
-    """
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, username, user_id, updated_at
-            FROM allowed_users
-            ORDER BY username ASC
-            """
-        )
-        rows = cur.fetchall()
-        conn.close()
-    except Exception as e:
-        logger.error("Ошибка загрузки allowed_users: %s", e)
-        return jsonify([])
+    if err:
+        return err
 
-    def _iso(dt):
-        if not dt:
-            return None
-        return dt.isoformat()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, user_id, updated_at FROM allowed_users ORDER BY id;")
+    rows = cur.fetchall()
+    conn.close()
 
     users = []
-    for row in rows:
+    for r in rows:
         users.append(
             {
-                "id": row["id"],
-                "username": row["username"],
-                "user_id": row.get("user_id"),
-                "updated_at": _iso(row.get("updated_at")),
+                "id": r["id"],
+                "username": r["username"],
+                "user_id": r.get("user_id"),
+                "updated_at": _iso(r.get("updated_at")),
             }
         )
-    return jsonify(users)
+
+    return jsonify({"users": users})
 
 
 @app.route("/api/allowed_users", methods=["POST"])
 def add_allowed_user():
     admin, err = _require_admin()
-if err:
-    return err
-    """
-    Добавление/обновление пользователя с доступом по username.
-    user_id заполнится, когда он зайдёт в миниапп (через check_access).
-    """
-    data = request.get_json(silent=True) or {}
-    username_raw = (data.get("username") or "").strip()
-    username_norm = _username_norm(username_raw)
+    if err:
+        return err
 
-    if not username_norm:
-        return jsonify({"error": "username is required"}), 400
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip().lstrip("@")
+    if not username:
+        return jsonify({"error": "username required"}), 400
+
+    username_norm = username.lower()
 
     conn = get_conn()
     cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO allowed_users (username, user_id, updated_at)
-            VALUES (%s, NULL, NOW())
-            ON CONFLICT (username) DO UPDATE SET
-                updated_at = EXCLUDED.updated_at
-            RETURNING id, username, user_id, updated_at
-            """,
-            (username_norm,),
-        )
-        row = cur.fetchone()
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        logger.error("Ошибка добавления allowed_user: %s", e)
-        return jsonify({"error": "db_error"}), 500
-
-    conn.close()
-    return jsonify(
-        {
-            "id": row["id"],
-            "username": row["username"],
-            "user_id": row.get("user_id"),
-            "updated_at": _iso(row.get("updated_at")),
-        }
+    cur.execute(
+        """
+        INSERT INTO allowed_users (username, user_id, updated_at)
+        VALUES (%s, NULL, NOW())
+        ON CONFLICT (username) DO UPDATE SET
+            updated_at = NOW()
+        RETURNING id, username, user_id, updated_at
+        """,
+        (username_norm,),
     )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok", "user": row})
 
 
 @app.route("/api/allowed_users/<int:allowed_id>", methods=["DELETE"])
-
 def delete_allowed_user(allowed_id: int):
     admin, err = _require_admin()
-if err:
-    return err
-    """
-    Удаление пользователя из allowed_users.
-    (админов из ENV это не касается)
-    """
+    if err:
+        return err
+
     conn = get_conn()
     cur = conn.cursor()
-    try:
-        cur.execute("DELETE FROM allowed_users WHERE id = %s", (allowed_id,))
-        deleted = cur.rowcount
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        logger.error("Ошибка удаления allowed_user: %s", e)
-        return jsonify({"error": "db_error"}), 500
-
+    cur.execute("DELETE FROM allowed_users WHERE id = %s", (allowed_id,))
+    conn.commit()
     conn.close()
-    if deleted == 0:
-        return jsonify({"error": "not_found"}), 404
     return jsonify({"status": "deleted"})
 
-
-# ---------------- Вакансии (основной список) ----------------
-
-
-@app.route("/api/jobs", methods=["GET"])
-def list_jobs():
-    """
-    Возвращает последние N НЕархивных вакансий.
-    Параметры:
-      - limit (int, по умолчанию 50)
-    """
-    try:
-        limit = int(request.args.get("limit", "50"))
-    except ValueError:
-        limit = 50
-    if limit <= 0 or limit > 500:
-        limit = 50
-
-    try:
-        conn = get_conn()
-        # cursor_factory уже DictCursor в get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id,
-                   source,
-                   source_name,
-                   external_id,
-                   url,
-                   text,
-                   sender_username,
-                   created_at,
-                   received_at,
-                   archived,
-                   archived_at
-            FROM jobs
-            WHERE archived = FALSE
-            ORDER BY received_at DESC
-            LIMIT %s
-            """,
-            (limit,),
-        )
-        rows = cur.fetchall()
-        conn.close()
-    except Exception as e:
-        logger.error("Ошибка загрузки jobs: %s", e)
-        return jsonify({"jobs": []})
-
-    jobs = []
-    for row in rows:
-        jobs.append(
-            {
-                "id": row["id"],
-                "source": row["source"],
-                "source_name": row.get("source_name"),
-                "external_id": row["external_id"],
-                "url": row.get("url"),
-                "text": row.get("text"),
-                "sender_username": row.get("sender_username"),
-                "created_at": _iso(row.get("created_at")),
-                "received_at": _iso(row.get("received_at")),
-                "archived": row.get("archived", False),
-                "archived_at": _iso(row.get("archived_at")),
-            }
-        )
-
-    return jsonify({"jobs": jobs})
-
-
-
-@app.route("/api/jobs/archive", methods=["GET"])
-def list_archived_jobs():
-    """
-    Возвращает архивированные вакансии.
-    ?limit=50
-    """
-    try:
-        limit = int(request.args.get("limit", "50"))
-    except ValueError:
-        limit = 50
-    if limit <= 0 or limit > 500:
-        limit = 50
-
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, source, source_name, external_id, url, text, sender_username,
-                   created_at, received_at, archived, archived_at
-            FROM jobs
-            WHERE archived = TRUE
-            ORDER BY archived_at DESC NULLS LAST
-            LIMIT %s
-            """,
-            (limit,),
-        )
-        rows = cur.fetchall()
-        conn.close()
-    except Exception as e:
-        logger.error("Ошибка загрузки архивных jobs: %s", e)
-        return jsonify({"jobs": []})
-
-    jobs = []
-    for row in rows:
-        jobs.append(
-            {
-                "id": row["id"],
-                "source": row["source"],
-                "source_name": row.get("source_name"),
-                "external_id": row["external_id"],
-                "url": row.get("url"),
-                "text": row.get("text"),
-                "sender_username": row.get("sender_username"),
-                "created_at": _iso(row.get("created_at")),
-                "received_at": _iso(row.get("received_at")),
-                "archived": row.get("archived", False),
-                "archived_at": _iso(row.get("archived_at")),
-            }
-        )
-    return jsonify({"jobs": jobs})
-
-
-# ---------------- Действия с вакансиями (архив / удаление) ----------------
-
-
-@app.route("/api/jobs/<int:job_id>/archive", methods=["POST"])
-def archive_job(job_id: int):
-    """
-    Перемещает вакансию в архив.
-    """
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            UPDATE jobs
-            SET archived = TRUE,
-                archived_at = NOW()
-            WHERE id = %s
-            """,
-            (job_id,),
-        )
-        updated = cur.rowcount
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error("Ошибка архивации job %s: %s", job_id, e)
-        return jsonify({"error": "db_error"}), 500
-
-    if updated == 0:
-        return jsonify({"error": "not_found"}), 404
-    return jsonify({"status": "archived"})
-
-
-@app.route("/api/jobs/<int:job_id>/unarchive", methods=["POST"])
-def unarchive_job(job_id: int):
-    """
-    Возвращает вакансию из архива.
-    """
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            UPDATE jobs
-            SET archived = FALSE,
-                archived_at = NULL
-            WHERE id = %s
-            """,
-            (job_id,),
-        )
-        updated = cur.rowcount
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error("Ошибка разархивации job %s: %s", job_id, e)
-        return jsonify({"error": "db_error"}), 500
-
-    if updated == 0:
-        return jsonify({"error": "not_found"}), 404
-    return jsonify({"status": "unarchived"})
-
-
-@app.route("/api/jobs/<int:job_id>", methods=["DELETE"])
-def delete_job(job_id: int):
-    """
-    Полное удаление вакансии.
-    """
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM jobs WHERE id = %s", (job_id,))
-        deleted = cur.rowcount
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error("Ошибка удаления job %s: %s", job_id, e)
-        return jsonify({"error": "db_error"}), 500
-
-    if deleted == 0:
-        return jsonify({"error": "not_found"}), 404
-    return jsonify({"status": "deleted"})
-
-
-# ---------------- Приём вакансий от парсеров (TG + FB) ----------------
-
-
-@app.route("/post", methods=["POST"])
-def receive_post():
-    """
-    Эндпоинт для tg-parser и fb-parser (через Apify).
-
-    Заголовок: X-API-KEY == API_SECRET (если он задан), иначе 403.
-    Тело JSON:
-    {
-      "source": str,          # "telegram" или "facebook" или что-то своё
-      "source_name": str|null,# не обязателен, но лучше передавать имя канала/группы
-      "external_id": str,     # уникальный ID поста в рамках source
-      "url": str|null,        # ссылка на пост
-      "text": str,
-      "sender_username": str|null,  # username автора (для Telegram), для FB можно не заполнять
-      "created_at": ISO-строка или null
-    }
-    """
-    if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
-        return jsonify({"error": "forbidden"}), 403
-
-    data = request.get_json(silent=True) or {}
-
-    source = data.get("source")
-    source_name = data.get("source_name")
-    external_id = data.get("external_id")
-    url = data.get("url")
-    text = data.get("text") or ""
-    sender_username = data.get("sender_username")
-    created_at_raw = data.get("created_at")
-
-    if not source or not external_id:
-        return jsonify({"error": "source and external_id are required"}), 400
-
-    created_at = None
-    if created_at_raw:
-        try:
-            created_at = datetime.fromisoformat(str(created_at_raw).replace("Z", "+00:00"))
-        except Exception:
-            created_at = None
-
-    # AI-фильтр
-    if not is_relevant_job(text):
-        logger.info("Пост %s/%s отфильтрован как нерелевантный", source, external_id)
-        return jsonify({"status": "irrelevant"})
-
-    # Сохранение в базу
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (external_id, source) DO NOTHING
-            RETURNING id, source, source_name, url, text, sender_username
-            """,
-            (source, source_name, external_id, url, text, sender_username, created_at),
-        )
-        row = cur.fetchone()
-        if not row:
-            conn.commit()
-            conn.close()
-            logger.info("Дубликат сообщения %s / %s", source, external_id)
-            return jsonify({"status": "duplicate"})
-        job_id = row["id"]
-        saved_source = row["source"]
-        saved_source_name = row.get("source_name")
-        saved_url = row.get("url")
-        saved_text = row.get("text") or ""
-        saved_sender_username = row.get("sender_username")
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        logger.error("Ошибка сохранения вакансии: %s", e)
-        return jsonify({"error": "db_error"}), 500
-
-    logger.info("Сохранена вакансия id=%s (%s / %s)", job_id, source, external_id)
-
-    # Отправляем уведомления пользователям
-    send_notifications_to_users(
-        text=saved_text,
-        link=saved_url,
-        chat_title=saved_source_name,
-        sender_username=saved_sender_username,
-    )
-
-    return jsonify({"status": "ok", "id": job_id})
 
 # ---------------- Secrets for parsers + UI ----------------
 
@@ -1241,14 +576,13 @@ def api_get_parser_secret(key: str):
     Для парсеров: получить секрет из БД.
     Авторизация: X-API-KEY == API_SECRET (если задан).
     """
-    API_SECRET = os.getenv("API_SECRET", "")
     if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
         return jsonify({"error": "forbidden"}), 403
 
     row = get_secret(key)
     if not row:
         return jsonify({"key": key, "value": None, "updated_at": None})
-    return jsonify({"key": row["key"], "value": row["value"], "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None})
+    return jsonify({"key": row["key"], "value": row["value"], "updated_at": _iso(row.get("updated_at"))})
 
 
 @app.route("/api/parser_status/<key>", methods=["POST"])
@@ -1257,7 +591,6 @@ def api_set_parser_status(key: str):
     Для парсеров: выставить статус/пинг.
     Авторизация: X-API-KEY == API_SECRET (если задан).
     """
-    API_SECRET = os.getenv("API_SECRET", "")
     if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
         return jsonify({"error": "forbidden"}), 403
 
@@ -1272,6 +605,7 @@ def api_set_parser_status(key: str):
 
 @app.route("/api/admin/secrets", methods=["GET"])
 def api_admin_secrets_overview():
+    """Статус секретов для UI (без значений)."""
     admin, err = _require_admin()
     if err:
         return err
@@ -1287,9 +621,6 @@ def api_admin_secrets_overview():
         except Exception:
             pending_val = None
 
-    def _iso(dt):
-        return dt.isoformat() if dt else None
-
     return jsonify(
         {
             "fb_cookies_updated_at": _iso(fb.get("updated_at")) if fb else None,
@@ -1301,6 +632,10 @@ def api_admin_secrets_overview():
 
 @app.route("/api/admin/fb_cookies", methods=["POST"])
 def api_admin_set_fb_cookies():
+    """
+    UI: сохранить FB cookies JSON (формат Apify cookie array).
+    Тело: {"cookies_json": "[...]"} или {"cookies": [...]}.
+    """
     admin, err = _require_admin()
     if err:
         return err
@@ -1331,6 +666,7 @@ def api_admin_set_fb_cookies():
 
 @app.route("/api/admin/tg_session", methods=["POST"])
 def api_admin_set_tg_session_manual():
+    """UI: вручную сохранить TG StringSession."""
     admin, err = _require_admin()
     if err:
         return err
@@ -1389,6 +725,10 @@ async def _tg_sign_in(phone: str, code: str, phone_code_hash: str, password: str
 
 @app.route("/api/admin/tg_auth/start", methods=["POST"])
 def api_admin_tg_auth_start():
+    """
+    UI шаг 1: отправить код на телефон.
+    Тело: {"phone": "+79990000000"}
+    """
     admin, err = _require_admin()
     if err:
         return err
@@ -1401,6 +741,7 @@ def api_admin_tg_auth_start():
     try:
         phone_code_hash = asyncio.run(_tg_send_code(phone))
     except Exception as e:
+        logger.error("TG auth start error: %s", e)
         return jsonify({"error": "tg_send_code_failed", "details": str(e)}), 500
 
     pending = {
@@ -1414,6 +755,10 @@ def api_admin_tg_auth_start():
 
 @app.route("/api/admin/tg_auth/confirm", methods=["POST"])
 def api_admin_tg_auth_confirm():
+    """
+    UI шаг 2: подтвердить код, создать StringSession и сохранить.
+    Тело: {"code": "12345", "password": "..."(опц.)}
+    """
     admin, err = _require_admin()
     if err:
         return err
@@ -1443,6 +788,7 @@ def api_admin_tg_auth_confirm():
     except SessionPasswordNeededError:
         return jsonify({"error": "2fa_required"}), 400
     except Exception as e:
+        logger.error("TG auth confirm error: %s", e)
         return jsonify({"error": "tg_sign_in_failed", "details": str(e)}), 500
 
     set_secret("tg_session", session_str)
@@ -1463,16 +809,7 @@ def cron_fb_cookies_reminder():
 
     row = get_secret("fb_cookies_json")
     if not row or not row.get("updated_at"):
-        # тут используй свою существующую функцию алерта/бота:
-        try:
-            requests.post(
-                f"{(os.getenv('API_BASE_URL') or '').rstrip('/')}/api/alert",
-                headers={"X-API-KEY": os.getenv("API_SECRET","")},
-                json={"source": "miniapp", "message": "❗️Facebook cookies ещё не заданы. Зайди в ⚙️ Настройки → Аккаунты и вставь cookies JSON."},
-                timeout=10,
-            )
-        except Exception:
-            pass
+        send_alert_human("❗️Facebook cookies ещё не заданы. Зайди в ⚙️ Настройки → Аккаунты и вставь cookies JSON.")
         return jsonify({"status": "alert_sent", "reason": "missing"})
 
     updated_at = row.get("updated_at")
@@ -1482,15 +819,10 @@ def cron_fb_cookies_reminder():
         age_days = 0
 
     if age_days >= 6:
-        try:
-            requests.post(
-                f"{(os.getenv('API_BASE_URL') or '').rstrip('/')}/api/alert",
-                headers={"X-API-KEY": os.getenv("API_SECRET","")},
-                json={"source": "miniapp", "message": f"⏰ Напоминание: пора обновить Facebook cookies (прошло ~{int(age_days)} дн). Открой миниапп → ⚙️ Настройки → Аккаунты → Facebook cookies."},
-                timeout=10,
-            )
-        except Exception:
-            pass
+        send_alert_human(
+            f"⏰ Напоминание: пора обновить Facebook cookies (прошло ~{int(age_days)} дн).\\n"
+            "Открой миниапп → ⚙️ Настройки → Аккаунты → Facebook cookies."
+        )
         return jsonify({"status": "alert_sent", "age_days": age_days})
 
     return jsonify({"status": "ok", "age_days": age_days})
@@ -1498,7 +830,6 @@ def cron_fb_cookies_reminder():
 
 @app.route("/")
 def index():
-    
     return send_from_directory(app.static_folder, "index.html")
 
 
