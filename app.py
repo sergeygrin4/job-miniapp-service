@@ -535,8 +535,22 @@ def api_alert():
 
 @app.route("/api/parser_secrets/<key>", methods=["GET"])
 def get_parser_secret(key: str):
-    if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
-        return jsonify({"error": "forbidden"}), 403
+    """
+    Получение секретов для парсеров (fb_cookies_json, tg_session и т.п.).
+
+    Доступ:
+      - либо внешний парсер с заголовком X-API-KEY == API_SECRET,
+      - либо админ миниаппа (через X-ADMIN-USERNAME / _require_admin()).
+    """
+    # Если пришёл X-API-KEY — это запрос от парсера, проверяем секрет
+    if request.headers.get("X-API-KEY") is not None:
+        if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
+            return jsonify({"error": "forbidden"}), 403
+    else:
+        # Иначе считаем, что это миниапп, требуем админ-доступ
+        admin, err = _require_admin()
+        if err:
+            return err
 
     row = get_secret(key)
     if not row:
