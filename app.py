@@ -13,7 +13,11 @@ from flask_cors import CORS
 from telegram import Bot
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import (
+    SessionPasswordNeededError,
+    AuthKeyUnregisteredError,
+    SessionRevokedError,
+)
 
 from db import get_conn, init_db, get_secret, set_secret, get_status, set_status
 
@@ -25,7 +29,7 @@ CORS(app)
 
 PORT = int(os.getenv("PORT", "8080"))
 
-# ==== ДЕФОЛТНЫЕ ЗНАЧЕНИЯ (на случай, если env не настроен) ====
+# ==== ДЕФОЛТЫ (если env не настроен) ====
 TG_API_ID_DEFAULT = 34487940
 TG_API_HASH_DEFAULT = "6f1242a8c3796d44fb761364b35a83f0"
 
@@ -159,12 +163,15 @@ def _iso(dt):
 # ---------------- Alerts ----------------
 
 def send_alert_human(text: str):
+    """
+    Послать алерт в ADMIN_CHAT_ID через бота.
+    """
     if not bot or not ADMIN_CHAT_ID:
         logger.warning("No bot/admin chat configured, alert skipped: %s", text)
         return
 
     try:
-        bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
+        asyncio.run(bot.send_message(chat_id=ADMIN_CHAT_ID, text=text))
     except Exception as e:
         logger.error("Failed to send alert: %s", e)
 
@@ -474,6 +481,12 @@ def api_get_groups():
     return jsonify({"groups": groups})
 
 
+# Алиас для FB-парсера: он ходит на /api/fb_groups, отдаём то же самое
+@app.route("/api/fb_groups", methods=["GET"])
+def api_get_fb_groups():
+    return api_get_groups()
+
+
 @app.route("/api/groups", methods=["POST"])
 def api_add_group():
     admin, err = _require_admin()
@@ -737,6 +750,7 @@ async def _tg_send_code(phone: str):
     client = TelegramClient(StringSession(), api_id, api_hash)
     await client.connect()
 
+    # по умолчанию: код может прийти в приложение или SMS
     result = await client.send_code_request(phone)
     phone_code_hash = result.phone_code_hash
 
@@ -763,6 +777,43 @@ async def _tg_sign_in(phone: str, code: str, phone_code_hash: str, password: Opt
     session_str = session.save()
     await client.disconnect()
     return session_str
+
+
+async def _tg_check_session_active():
+    """
+    Проверка, активна ли текущая StringSession из БД.
+    """
+    api_id, api_hash = _tg_api_creds()
+    if not api_id or not api_hash:
+        return {"ok": False, "reason": "no_api_creds", "me": None}
+
+    row = get_secret("tg_session")
+    if not row or not row.get("value"):
+        return {"ok": False, "reason": "no_session_stored", "me": None}
+
+    session_str = row["value"]
+
+    client = TelegramClient(StringSession(session_str), api_id, api_hash)
+    await client.connect()
+    try:
+        me = await client.get_me()
+        if not me:
+            result = {"ok": False, "reason": "not_authorized", "me": None}
+        else:
+            info = {
+                "id": me.id,
+                "username": me.username,
+                "first_name": me.first_name,
+                "bot": bool(getattr(me, "bot", False)),
+            }
+            result = {"ok": True, "reason": None, "me": info}
+    except (AuthKeyUnregisteredError, SessionRevokedError):
+        result = {"ok": False, "reason": "session_revoked", "me": None}
+    except Exception as e:
+        result = {"ok": False, "reason": str(e), "me": None}
+    finally:
+        await client.disconnect()
+    return result
 
 
 @app.route("/api/admin/tg_auth/start", methods=["POST"])
@@ -832,6 +883,24 @@ def api_admin_tg_auth_confirm():
     set_secret("tg_session", session_str)
     set_status("tg_auth_pending", "")
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/admin/tg_session/check", methods=["GET"])
+def api_admin_tg_session_check():
+    """
+    UI: проверить, что tg_session в БД ещё рабочая.
+    """
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    try:
+        result = asyncio.run(_tg_check_session_active())
+    except Exception as e:
+        logger.error("tg_session_check error: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify(result)
 
 
 # ---------------- Cron helpers (Railway Scheduled Jobs) ----------------
@@ -928,6 +997,10 @@ if __name__ == "__main__":
     logger.info("Инициализация БД...")
     init_db()
     logger.info("Запуск Flask на порту %s", PORT)
-    logger.info("TG_API_ID_DEFAULT=%s, BOT_TOKEN set=%s, ADMIN_CHAT_ID=%s",
-                TG_API_ID_DEFAULT, bool(BOT_TOKEN), ADMIN_CHAT_ID)
+    logger.info(
+        "TG_API_ID_DEFAULT=%s, BOT_TOKEN set=%s, ADMIN_CHAT_ID=%s",
+        TG_API_ID_DEFAULT,
+        bool(BOT_TOKEN),
+        ADMIN_CHAT_ID,
+    )
     app.run(host="0.0.0.0", port=PORT)
