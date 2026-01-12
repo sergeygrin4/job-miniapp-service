@@ -220,6 +220,8 @@
 
     .list-meta span {
       word-break: break-all;
+      display: inline-block;
+      margin-right: 6px;
     }
 
     .list-controls {
@@ -229,8 +231,6 @@
       gap: 6px;
       flex-shrink: 0;
     }
-
-    .text-right { text-align: right; }
 
     hr {
       border: none;
@@ -373,8 +373,9 @@
             Если у тебя уже есть готовая StringSession (локальный скрипт и т.п.), просто вставь её сюда.
           </p>
           <textarea id="tg-session-text" placeholder="1AAABbCc..."></textarea>
-          <div style="margin-top:6px;">
+          <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
             <button class="btn" id="tg-session-save-btn">Сохранить StringSession</button>
+            <button class="btn btn-outline" id="tg-session-check-btn">Проверить текущую сессию</button>
           </div>
         </div>
 
@@ -572,7 +573,7 @@
         const created = formatDate(j.created_at);
         const received = formatDate(j.received_at);
 
-        // --- Группа: ссылка + название ---
+        // Группа: ссылка + название
         const srcRaw = j.source || "";
         const srcNameRaw = j.source_name || "";
         let groupUrl = "";
@@ -598,7 +599,7 @@
           groupHtml = groupLabelEsc || "группа";
         }
 
-        // --- Автор: ссылка, если это URL ---
+        // Автор: ссылка, если это URL
         let authorHtml = "";
         if (sender) {
           const senderEsc = escapeHtml(sender);
@@ -609,7 +610,7 @@
           }
         }
 
-        // --- Ссылка на пост ---
+        // Ссылка на пост
         let postLinkHtml = "";
         if (url) {
           const urlEsc = escapeHtml(url);
@@ -891,6 +892,27 @@
       }
     }
 
+    async function tgSessionCheck() {
+      try {
+        const data = await apiFetch("/api/admin/tg_session/check", {
+          method: "GET",
+          admin: true,
+        });
+
+        if (data.ok) {
+          const me = data.me || {};
+          const uname = me.username ? "@" + me.username : (me.id ? "id=" + me.id : "неизвестно");
+          showFlash("TG сессия активна: " + uname);
+        } else {
+          const reason = data.reason || data.error || "не авторизована";
+          showFlash("TG сессия неактивна: " + reason, true);
+        }
+      } catch (e) {
+        console.error(e);
+        showFlash("Ошибка проверки TG сессии: " + e.message, true);
+      }
+    }
+
     // --------- Разрешённые пользователи ---------
 
     async function loadAllowedUsers() {
@@ -1008,6 +1030,7 @@
       $("fb-cookies-json-btn").addEventListener("click", saveFbCookiesFull);
       $("fb-cookies-dynamic-btn").addEventListener("click", saveFbCookiesDynamic);
       $("tg-session-save-btn").addEventListener("click", saveTgSessionManual);
+      $("tg-session-check-btn").addEventListener("click", tgSessionCheck);
       $("tg-send-code-btn").addEventListener("click", tgAuthStart);
       $("tg-confirm-code-btn").addEventListener("click", tgAuthConfirm);
       $("allowed-add-btn").addEventListener("click", addAllowedUser);
