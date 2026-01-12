@@ -950,22 +950,15 @@ def cron_parsers_watchdog():
 
 # ---- Groups (FB + TG источники) ----
 
-
 @app.route("/api/groups", methods=["GET"])
 def get_groups():
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT
-                id,
-                source,
-                name,
-                is_enabled,
-                is_fb_group,
-                created_at
+            SELECT id, group_id, group_name, enabled, added_at
             FROM fb_groups
-            ORDER BY created_at DESC
+            ORDER BY id DESC
             """
         )
         rows = cur.fetchall()
@@ -975,11 +968,10 @@ def get_groups():
         groups.append(
             {
                 "id": r[0],
-                "source": r[1],
-                "name": r[2],
-                "is_enabled": bool(r[3]),
-                "is_fb_group": bool(r[4]),
-                "created_at": _iso(r[5]),
+                "group_id": r[1],
+                "group_name": r[2],
+                "enabled": bool(r[3]),
+                "added_at": _iso(r[4]),
             }
         )
     return jsonify({"groups": groups})
@@ -987,72 +979,69 @@ def get_groups():
 
 @app.route("/api/groups", methods=["POST"])
 def add_group():
-    data = request.get_json(silent=True) or {}
-    source = (data.get("source") or "").strip()
-    name = (data.get("name") or "").strip() or None
+    admin, err = _require_admin()
+    if err:
+        return err
 
-    if not source:
-        return jsonify({"error": "source_required"}), 400
+    data = get_json()
+    group_id = (data.get("group_id") or "").strip()
+    group_name = (data.get("group_name") or "").strip()
 
-    is_fb_group = "facebook.com" in source.lower()
+    if not group_id:
+        return jsonify({"error": "group_id_required"}), 400
 
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             """
-            INSERT INTO fb_groups (source, name, is_enabled, is_fb_group)
-            VALUES (%s, %s, TRUE, %s)
-            RETURNING id, created_at
+            INSERT INTO fb_groups (group_id, group_name, enabled)
+            VALUES (%s, %s, TRUE)
+            ON CONFLICT (group_id) DO UPDATE
+            SET group_name = EXCLUDED.group_name,
+                enabled   = TRUE
+            RETURNING id
             """,
-            (source, name, is_fb_group),
+            (group_id, group_name),
         )
         row = cur.fetchone()
         conn.commit()
 
-    return jsonify(
-        {
-            "status": "ok",
-            "group": {
-                "id": row[0],
-                "source": source,
-                "name": name,
-                "is_enabled": True,
-                "is_fb_group": is_fb_group,
-                "created_at": _iso(row[1]),
-            },
-        }
-    )
+    return jsonify({"status": "ok", "id": row[0] if row else None})
 
 
-@app.route("/api/groups/<int:group_id>", methods=["DELETE"])
-def delete_group(group_id: int):
+@app.route("/api/groups/<int:gid>", methods=["DELETE"])
+def delete_group(gid: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("DELETE FROM fb_groups WHERE id = %s", (group_id,))
+        cur.execute("DELETE FROM fb_groups WHERE id = %s", (gid,))
         conn.commit()
+
     return jsonify({"status": "ok"})
 
 
-@app.route("/api/groups/<int:group_id>/toggle", methods=["POST"])
-def toggle_group(group_id: int):
+@app.route("/api/groups/<int:gid>/toggle", methods=["POST"])
+def toggle_group(gid: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = get_json()
+    enabled = bool(data.get("enabled", True))
+
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            """
-            UPDATE fb_groups
-            SET is_enabled = NOT is_enabled
-            WHERE id = %s
-            RETURNING is_enabled
-            """,
-            (group_id,),
+            "UPDATE fb_groups SET enabled = %s WHERE id = %s",
+            (enabled, gid),
         )
-        row = cur.fetchone()
         conn.commit()
 
-    if not row:
-        return jsonify({"error": "not_found"}), 404
+    return jsonify({"status": "ok"})
 
-    return jsonify({"status": "ok", "is_enabled": bool(row[0])})
 
 
 # ---- main ----
