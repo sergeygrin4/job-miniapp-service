@@ -127,41 +127,43 @@ def index_page():
     return send_from_directory(app.static_folder, "index.html")
 
 
+
 # ---- access / allowed_users ----
 
+def get_json():
+    return request.get_json(silent=True) or {}
 
 @app.route("/check_access", methods=["POST"])
 def check_access():
     """
-    Миниапп при заходе дергает этот эндпоинт и передаёт init_data из Telegram WebApp.
-    Здесь можно проверить подпись, username и т.д. Сейчас — максимально простой вариант:
-    - если username в ADMINS или в таблице allowed_users — даём доступ
+    Миниапп при заходе дергает этот эндпоинт и передаёт username / user_id.
+    Доступ есть, если:
+      - username в ADMINS (переменная окружения ADMINS), ИЛИ
+      - username есть в таблице allowed_users.
+    Админов автоматически добавляем в allowed_users при первом заходе.
     """
-    data = request.get_json(silent=True) or {}
+    data = get_json()
     username = data.get("username")
     user_id = data.get("user_id")
 
     u_norm = _username_norm(username)
-
-    allowed = False
     is_admin_flag = is_admin(username)
+    allowed = False
 
     with get_conn() as conn:
         cur = conn.cursor()
+
         if u_norm:
+            # есть ли в allowed_users
             cur.execute(
-                """
-                SELECT 1 FROM allowed_users
-                WHERE username = %s
-                LIMIT 1
-                """,
+                "SELECT 1 FROM allowed_users WHERE username = %s LIMIT 1",
                 (u_norm,),
             )
             if cur.fetchone():
                 allowed = True
 
-        if not allowed and is_admin_flag:
-            # админа добавляем автоматически
+        # если админ и ещё не в таблице — добавим
+        if is_admin_flag and not allowed and u_norm:
             cur.execute(
                 """
                 INSERT INTO allowed_users (username, user_id)
@@ -185,9 +187,14 @@ def check_access():
 
 @app.route("/api/allowed_users", methods=["GET", "POST", "DELETE"])
 def api_allowed_users():
-    admin, err = _require_admin()
-    if err:
-        return err
+    """
+    Управление списком доступа. Только для админов (ADMINS).
+    """
+    admin_username = request.headers.get("X-ADMIN-USERNAME")
+    if not is_admin(admin_username):
+        return jsonify({"error": "admin_forbidden"}), 403
+
+    data = get_json()
 
     if request.method == "GET":
         with get_conn() as conn:
@@ -200,6 +207,7 @@ def api_allowed_users():
                 """
             )
             rows = cur.fetchall()
+
         items = []
         for r in rows:
             items.append(
@@ -211,8 +219,6 @@ def api_allowed_users():
                 }
             )
         return jsonify({"items": items})
-
-    data = request.get_json(silent=True) or {}
 
     if request.method == "POST":
         username = _username_norm(data.get("username"))
@@ -236,6 +242,7 @@ def api_allowed_users():
 
         if not row:
             return jsonify({"status": "exists"})
+
         return jsonify(
             {
                 "status": "ok",
@@ -259,6 +266,7 @@ def api_allowed_users():
         conn.commit()
 
     return jsonify({"status": "ok"})
+
 
 
 # ---- Jobs (вакансии) ----
