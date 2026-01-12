@@ -1065,13 +1065,23 @@ async function saveFbCookiesDynamic() {
       return;
     }
 
-    // тянем сохранённый полный JSON
-    const secretRes = await fetch("/api/parser_secrets/fb_cookies_json");
-    if (!secretRes.ok) {
-      showFlash("Не удалось получить сохранённые cookies (fb_cookies_json)", true);
-      console.error("fb_cookies_json status", secretRes.status, await secretRes.text());
-      return;
-    }
+          // тянем сохранённый полный JSON как админ
+      let secretData;
+      try {
+        secretData = await apiFetch("/api/parser_secrets/fb_cookies_json", {
+          admin: true, // добавит X-ADMIN-USERNAME
+        });
+      } catch (e) {
+        console.error("fb_cookies_json error", e);
+        showFlash(
+          "Не удалось получить сохранённые cookies (fb_cookies_json): " + e.message,
+          true
+        );
+        return;
+      }
+
+      let storedJson = secretData.value;
+
     const secretData = await secretRes.json();
     let storedJson = secretData.value;
     if (!storedJson) {
