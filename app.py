@@ -1,1025 +1,801 @@
 import os
-import re
 import json
 import hmac
 import hashlib
 import asyncio
 import logging
-import requests
 from urllib.parse import parse_qsl
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+import httpx
 from telegram import Bot
-
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import SessionPasswordNeededError
-
-from db import get_conn, init_db
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - miniapp - %(levelname)s - %(message)s",
+from telethon.errors import (
+    SessionPasswordNeededError,
+    AuthKeyUnregisteredError,
+    SessionRevokedError,
 )
+
+from db import get_conn, init_db, get_secret, set_secret, get_status, set_status
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("miniapp")
 
-# ---------------- Конфиг из окружения ----------------
-
-API_SECRET = os.getenv("API_SECRET", "")
-
-# Telegram MiniApp verification secret
-TG_BOT_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN") or ""
-TG_BOT_API = os.getenv("BOT_API", "https://api.telegram.org")
-TELEGRAM_WEBAPP_SECRET = os.getenv("API_SECRET", "")
-
-ALLOWED_USERNAMES_ENV = os.getenv("ALLOWED_USERNAMES", "")
-ADMINS_ENV = os.getenv("ADMINS", "")
-
-TG_API_ID_DEFAULT = int(os.getenv("TG_API_ID") or os.getenv("API_ID") or "34487940")
-TG_API_HASH_DEFAULT = os.getenv("TG_API_HASH") or os.getenv(
-    "API_HASH"
-) or "6f1242a8c3796d44fb761364b35a83f0"
-
-PARSER_ALERT_INTERVAL_MINUTES = int(os.getenv("PARSER_ALERT_INTERVAL_MINUTES", "60"))
-
-# Telegram bot for alerts
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or TG_BOT_TOKEN
-ADMIN_CHAT_ID = int(os.getenv("MANAGER_CHAT_ID") or os.getenv("ADMIN_CHAT_ID") or "0")
-
-if TG_API_ID_DEFAULT:
-    logger.info(
-        "TG_API_ID_DEFAULT=%s, BOT_TOKEN set=%s, ADMIN_CHAT_ID=%s",
-        TG_API_ID_DEFAULT,
-        bool(TELEGRAM_BOT_TOKEN),
-        ADMIN_CHAT_ID,
-    )
-
-bot: Optional[Bot] = None
-if TELEGRAM_BOT_TOKEN:
-    try:
-        bot = Bot(token=TELEGRAM_BOT_TOKEN, base_url=TG_BOT_API)
-    except Exception as e:
-        logger.error("Failed to init Telegram Bot: %s", e)
-        bot = None
-
-# ---------------- Flask init ----------------
-
-app = Flask(__name__, static_folder="static", static_url_path="/static")
+app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
 
+PORT = int(os.getenv("PORT", "8080"))
 
-# ---------------- DB init ----------------
+# ---- Telegram / бот / админы ----
 
-@app.before_first_request
-def _init_db():
-    logger.info("Инициализация БД...")
-    init_db()
-    logger.info("БД инициализирована")
+TG_API_ID_DEFAULT = 34487940
+TG_API_HASH_DEFAULT = "6f1242a8c3796d44fb761364b35a83f0"
 
+BOT_TOKEN_DEFAULT = "7952407611:AAEG9eqd6KBmmatspCgpfx2bZtcU1YcdmWI"
+ADMIN_CHAT_ID_DEFAULT = "794618749"
 
-# ---------------- Helpers ----------------
+BOT_TOKEN = (
+    os.getenv("TELEGRAM_BOT_TOKEN")
+    or os.getenv("BOT_TOKEN")
+    or BOT_TOKEN_DEFAULT
+)
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID") or ADMIN_CHAT_ID_DEFAULT
+
+TG_API_ID = int(os.getenv("TG_API_ID", TG_API_ID_DEFAULT))
+TG_API_HASH = os.getenv("TG_API_HASH", TG_API_HASH_DEFAULT)
+
+# Внешний сервис для авторизации в Telegram
+TG_AUTH_SERVICE_URL = os.getenv("TG_AUTH_SERVICE_URL", "").rstrip("/")
+TG_AUTH_SERVICE_TOKEN = os.getenv("TG_AUTH_SERVICE_TOKEN", "")
+
+bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
+
+ADMINS_RAW = os.getenv("ADMINS", "")
+ADMINS = set()
+for a in (ADMINS_RAW or "").split(","):
+    a = a.strip()
+    if a:
+        ADMINS.add(a.lstrip("@").lower())
+
 
 def _username_norm(username: Optional[str]) -> Optional[str]:
     if not username:
         return None
-    username = username.strip().lstrip("@")
-    if not username:
-        return None
-    return username
+    return username.lstrip("@").lower()
 
 
-def _get_admins() -> set[str]:
-    res = set()
-    if ADMINS_ENV:
-        for part in ADMINS_ENV.split(","):
-            u = _username_norm(part)
-            if u:
-                res.add(u.lower())
-    return res
+# ---- верификация initData из Telegram ----
+
+API_SECRET = os.getenv("API_SECRET", "")  # секрет с BotFather (для проверки initData)
 
 
-def _get_allowed_from_env() -> set[str]:
-    res = set()
-    if ALLOWED_USERNAMES_ENV:
-        for part in ALLOWED_USERNAMES_ENV.split(","):
-            u = _username_norm(part)
-            if u:
-                res.add(u.lower())
-    return res
-
-
-ADMINS = _get_admins()
-ALLOWED_FROM_ENV = _get_allowed_from_env()
-
-
-def is_admin(username: Optional[str]) -> bool:
-    if not username:
-        return False
-    return username.lower() in ADMINS
-
-
-def is_allowed_env(username: Optional[str]) -> bool:
-    if not username:
-        return False
-    return username.lower() in ALLOWED_FROM_ENV
-
-
-def verify_telegram_webapp(init_data: str) -> Optional[dict]:
+def verify_telegram_init_data(init_data_str: str) -> Optional[dict]:
     """
-    Проверка подписи MiniApp initData по токену бота.
-    Возвращает dict с initData или None, если подпись невалидна.
+    Проверка подписи initData по алгоритму из доки Telegram.
+    Возвращает dict с данными или None, если подпись невалидна.
     """
-    if not TG_BOT_TOKEN:
-        logger.warning("TG_BOT_TOKEN not set, skipping init_data verification")
+    if not init_data_str or not API_SECRET:
         return None
 
     try:
-        parsed = dict(parse_qsl(init_data, strict_parsing=True))
+        parsed = dict(parse_qsl(init_data_str, strict_parsing=True))
+        hash_str = parsed.pop("hash", None)
+        if not hash_str:
+            return None
+
+        data_check_arr = [f"{k}={v}" for k, v in sorted(parsed.items())]
+        data_check_string = "\n".join(data_check_arr)
+
+        secret_key = hashlib.sha256(API_SECRET.encode()).digest()
+        hmac_string = hmac.new(secret_key, msg=data_check_string.encode(), digestmod=hashlib.sha256).hexdigest()
+
+        if hmac_string != hash_str:
+            return None
+
+        return parsed
     except Exception:
-        logger.exception("Failed to parse init_data")
+        logger.exception("init_data verification error")
         return None
 
-    hash_value = parsed.pop("hash", None)
-    if not hash_value:
-        logger.warning("No hash in init_data")
+
+def get_current_user():
+    """
+    Пытаемся достать пользователя из Telegram initData.
+    Если не получилось — вернём None.
+    """
+    init_data = request.headers.get("X-TG-INIT-DATA") or ""
+    if not init_data:
         return None
 
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
-    secret_key = hmac.new(
-        f"WebAppData{TG_BOT_TOKEN}".encode(), digestmod=hashlib.sha256
-    ).digest()
-    computed_hash = hmac.new(
-        secret_key, data_check_string.encode(), hashlib.sha256
-    ).hexdigest()
-
-    if computed_hash != hash_value:
-        logger.warning("init_data hash mismatch")
+    parsed = verify_telegram_init_data(init_data)
+    if not parsed:
+        logger.warning("init_data verification failed, falling back to X-ADMIN-USERNAME")
         return None
 
-    return parsed
+    try:
+        user_json = parsed.get("user")
+        if not user_json:
+            return None
+        return json.loads(user_json)
+    except Exception:
+        logger.exception("Failed to parse user from init_data")
+        return None
 
+
+def _require_admin():
+    """
+    Проверка, что текущий пользователь — админ.
+    Сначала берём init_data, если нет/невалидно — X-ADMIN-USERNAME.
+    """
+    user = get_current_user()
+    if user and user.get("username"):
+        uname = _username_norm(user["username"])
+        if uname in ADMINS:
+            return uname, None
+
+    # fallback: заголовок X-ADMIN-USERNAME от фронта
+    fallback = request.headers.get("X-ADMIN-USERNAME", "").strip()
+    if fallback:
+        uname = _username_norm(fallback)
+        if uname in ADMINS:
+            return uname, None
+
+    return None, (jsonify({"error": "admin_forbidden"}), 403)
+
+
+# ---- утилиты ----
 
 def send_alert_human(text: str):
-    if not bot or not ADMIN_CHAT_ID:
+    """
+    Отправка уведомления в Telegram-бота (в ADMIN_CHAT_ID).
+    Используем httpx (sync), чтобы не мучиться с event loop.
+    """
+    if not BOT_TOKEN or not ADMIN_CHAT_ID:
         logger.warning("No bot/admin chat configured, alert skipped: %s", text)
         return
 
     try:
-        bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": ADMIN_CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML",
+        }
+        resp = httpx.post(url, json=payload, timeout=10)
+        resp.raise_for_status()
+        logger.info("Alert sent to admin chat: %s", text)
     except Exception as e:
         logger.error("Failed to send alert: %s", e)
 
 
-@app.route("/api/alert", methods=["POST"])
-def api_alert():
-    if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
-        return jsonify({"error": "forbidden"}), 403
-
-    data = request.get_json(silent=True) or {}
-    src = data.get("source") or "unknown"
-    msg = data.get("message") or ""
-    if not msg:
-        return jsonify({"error": "message_required"}), 400
-
-    send_alert_human(f"🔔 {src}:\n{msg}")
-    return jsonify({"status": "ok"})
+def get_json():
+    return request.get_json(silent=True) or {}
 
 
-# ---------------- Access check ----------------
-
-@app.route("/check_access", methods=["POST"])
-def check_access():
-    """
-    Миниапп присылает { user_id, username }.
-    Разрешаем:
-      - если username в ADMINS
-      - или если username есть в allowed_users (таблица)
-    """
-    data = request.get_json(silent=True) or {}
-    user_id = data.get("user_id")
-    username = _username_norm(data.get("username"))
-
-    if username and is_admin(username):
-        return jsonify({"access": "admin"})
-
-    # Сначала проверим env-allowed (backdoor)
-    if username and is_allowed_env(username):
-        return jsonify({"access": "allowed"})
-
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "SELECT 1 FROM allowed_users WHERE username = %s OR user_id = %s LIMIT 1",
-            (username, user_id),
-        )
-        row = cur.fetchone()
-    finally:
-        conn.close()
-
-    if row:
-        return jsonify({"access": "allowed"})
-
-    return jsonify({"access": "denied"})
-
-
-# ---------------- Static / UI ----------------
+# ---- статика ----
 
 @app.route("/")
 def index():
-    return send_from_directory("static", "index.html")
+    return send_from_directory(app.static_folder, "index.html")
 
 
-# ---------------- Groups ----------------
+# ---- access / allowed_users ----
 
-@app.route("/api/groups", methods=["GET"])
-def api_list_groups():
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
+@app.route("/check_access", methods=["POST"])
+def check_access():
+    data = get_json()
+    user_id = data.get("user_id")
+    username = (data.get("username") or "").lstrip("@").lower()
+
+    res = {"access_granted": False, "is_admin": False}
+
+    if username and username in ADMINS:
+        res["access_granted"] = True
+        res["is_admin"] = True
+        return jsonify(res)
+
+    with get_conn() as conn:
+        cur = conn.cursor()
         cur.execute(
-            "SELECT id, group_id, name, enabled, created_at FROM groups ORDER BY id DESC"
+            "SELECT 1 FROM allowed_users WHERE username = %s LIMIT 1",
+            (username,),
+        )
+        allowed = cur.fetchone() is not None
+
+    res["access_granted"] = allowed
+    res["is_admin"] = username in ADMINS
+    return jsonify(res)
+
+
+@app.route("/api/allowed_users", methods=["GET"])
+def get_allowed_users():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, username, user_id FROM allowed_users ORDER BY id ASC"
         )
         rows = cur.fetchall()
-    finally:
-        conn.close()
+
+    users = [
+        {"id": r[0], "username": r[1], "user_id": r[2]}
+        for r in rows
+    ]
+    return jsonify({"users": users})
+
+
+@app.route("/api/allowed_users", methods=["POST"])
+def add_allowed_user():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = get_json()
+    username = (data.get("username") or "").strip().lstrip("@").lower()
+    if not username:
+        return jsonify({"error": "username_required"}), 400
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO allowed_users (username)
+            VALUES (%s)
+            ON CONFLICT (username) DO NOTHING
+            """,
+            (username,),
+        )
+        conn.commit()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/allowed_users/<int:user_id>", methods=["DELETE"])
+def delete_allowed_user(user_id):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM allowed_users WHERE id = %s", (user_id,))
+        conn.commit()
+
+    return jsonify({"status": "ok"})
+
+
+# ---- groups ----
+
+@app.route("/api/groups", methods=["GET"])
+def get_groups():
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, group_id, group_name, enabled, created_at
+            FROM groups
+            ORDER BY id ASC
+            """
+        )
+        rows = cur.fetchall()
 
     groups = []
     for r in rows:
         groups.append(
             {
-                "id": r["id"],
-                "group_id": r["group_id"],
-                "name": r["name"],
-                "enabled": r["enabled"],
-                "created_at": r["created_at"].isoformat()
-                if r["created_at"]
-                else None,
+                "id": r[0],
+                "group_id": r[1],
+                "group_name": r[2],
+                "enabled": r[3],
+                "created_at": r[4].isoformat() if r[4] else None,
             }
         )
     return jsonify({"groups": groups})
 
 
 @app.route("/api/groups", methods=["POST"])
-def api_add_group():
-    data = request.get_json(silent=True) or {}
-    group_id = (data.get("group_id") or "").strip()
-    name = (data.get("name") or "").strip()
+def add_group():
+    admin, err = _require_admin()
+    if err:
+        return err
 
+    data = get_json()
+    group_id = (data.get("group_id") or "").strip()
+    group_name = (data.get("group_name") or "").strip()
     if not group_id:
         return jsonify({"error": "group_id_required"}), 400
 
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
+    with get_conn() as conn:
+        cur = conn.cursor()
         cur.execute(
             """
-            INSERT INTO groups (group_id, name, enabled, created_at)
-            VALUES (%s, %s, TRUE, NOW())
-            RETURNING id
+            INSERT INTO groups (group_id, group_name, enabled)
+            VALUES (%s, %s, TRUE)
             """,
-            (group_id, name or None),
+            (group_id, group_name or None),
         )
-        row = cur.fetchone()
         conn.commit()
-    finally:
-        conn.close()
-
-    return jsonify({"status": "ok", "id": row["id"]})
-
-
-@app.route("/api/groups/<int:group_id>", methods=["DELETE"])
-def api_delete_group(group_id: int):
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute("DELETE FROM groups WHERE id = %s", (group_id,))
-        conn.commit()
-    finally:
-        conn.close()
 
     return jsonify({"status": "ok"})
 
 
-@app.route("/api/groups/<int:group_id>/toggle", methods=["POST"])
-def api_toggle_group(group_id: int):
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
+@app.route("/api/groups/<int:gid>/toggle", methods=["POST"])
+def toggle_group(gid):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = get_json()
+    enabled = bool(data.get("enabled", True))
+
+    with get_conn() as conn:
+        cur = conn.cursor()
         cur.execute(
-            "UPDATE groups SET enabled = NOT enabled WHERE id = %s RETURNING enabled",
-            (group_id,),
+            "UPDATE groups SET enabled = %s WHERE id = %s",
+            (enabled, gid),
         )
-        row = cur.fetchone()
         conn.commit()
-    finally:
-        conn.close()
 
-    if not row:
-        return jsonify({"error": "not_found"}), 404
-
-    return jsonify({"status": "ok", "enabled": row["enabled"]})
+    return jsonify({"status": "ok"})
 
 
-# ---------------- Jobs ----------------
+@app.route("/api/groups/<int:gid>", methods=["DELETE"])
+def delete_group(gid):
+    admin, err = _require_admin()
+    if err:
+        return err
 
-def _clean_text(text: str) -> str:
-    text = (text or "").strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM groups WHERE id = %s", (gid,))
+        conn.commit()
+
+    return jsonify({"status": "ok"})
 
 
-@app.route("/post", methods=["POST"])
+# ---- jobs ----
+
+def _job_to_dict(row):
+    return {
+        "id": row[0],
+        "source": row[1],
+        "source_name": row[2],
+        "text": row[3],
+        "url": row[4],
+        "sender_username": row[5],
+        "created_at": row[6].isoformat() if row[6] else None,
+        "received_at": row[7].isoformat() if row[7] else None,
+        "archived": row[8],
+    }
+
+
+@app.route("/api/jobs", methods=["GET"])
+def get_jobs():
+    limit = int(request.args.get("limit", 50))
+    archived = request.args.get("archived", "false").lower() == "true"
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, source, source_name, text, url, sender_username,
+                   created_at, received_at, archived
+            FROM jobs
+            WHERE archived = %s
+            ORDER BY received_at DESC, id DESC
+            LIMIT %s
+            """,
+            (archived, limit),
+        )
+        rows = cur.fetchall()
+
+    jobs = [_job_to_dict(r) for r in rows]
+    return jsonify({"jobs": jobs})
+
+
+@app.route("/api/jobs", methods=["POST"])
 def add_job():
-    data = request.get_json(silent=True) or {}
+    data = get_json()
     source = (data.get("source") or "").strip()
-    source_name = (data.get("source_name") or "").strip()
-    external_id = (data.get("external_id") or "").strip()
-    url = (data.get("url") or "").strip()
     text = (data.get("text") or "").strip()
-    sender_username = (data.get("sender_username") or "").strip()
+    if not source or not text:
+        return jsonify({"error": "source_and_text_required"}), 400
+
+    source_name = (data.get("source_name") or "").strip() or None
+    url = (data.get("url") or "").strip() or None
+    sender_username = (data.get("sender_username") or "").strip() or None
     created_at = data.get("created_at")
-
-    if not source or not external_id or not text:
-        return jsonify({"error": "source, external_id, text required"}), 400
-
-    text = _clean_text(text)
-
-    # created_at may be iso string
     created_dt = None
     if created_at:
         try:
-            # normalize Z
-            if isinstance(created_at, str) and created_at.endswith("Z"):
-                created_at = created_at[:-1] + "+00:00"
             created_dt = datetime.fromisoformat(created_at)
         except Exception:
             created_dt = None
 
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
+    now = datetime.now(timezone.utc)
+
+    with get_conn() as conn:
+        cur = conn.cursor()
         cur.execute(
             """
-            INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at, received_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
-            ON CONFLICT (external_id, source) DO NOTHING
+            INSERT INTO jobs (source, source_name, text, url, sender_username,
+                              created_at, received_at, archived)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE)
             RETURNING id
             """,
-            (
-                source,
-                source_name or None,
-                external_id,
-                url or None,
-                text,
-                sender_username or None,
-                created_dt,
-            ),
+            (source, source_name, text, url, sender_username, created_dt, now),
         )
-        row = cur.fetchone()
+        job_id = cur.fetchone()[0]
         conn.commit()
-    finally:
-        conn.close()
 
-    # если запись действительно вставлена (а не конфликт по external_id+source) —
-    # шлём уведомление в Telegram-бота
-    if row:
-        try:
-            preview = text
-            if len(preview) > 400:
-                preview = preview[:400].rstrip() + "…"
-
-            group_label = source_name or source
-            author_label = sender_username or ""
-
-            lines = [
-                "🆕 Новая вакансия",
-                "",
-                preview,
-            ]
-
-            if group_label:
-                lines.append(f"Группа: {group_label}")
-            if author_label:
-                if not author_label.startswith("@"):
-                    author_label = "@" + author_label
-                lines.append(f"Автор: {author_label}")
-
-            if url:
-                lines.append(f"Открыть пост: {url}")
-
-            send_alert_human("\n".join(lines))
-        except Exception as e:
-            logger.error("Failed to send new job alert: %s", e)
-
-        return jsonify({"status": "ok", "inserted": True, "id": row["id"]})
-    return jsonify({"status": "ok", "inserted": False})
-
-
-@app.route("/api/jobs", methods=["GET"])
-def api_list_jobs():
-    """
-    Параметры:
-      - limit (по умолчанию 50)
-      - offset (по умолчанию 0)
-      - archived: "true"/"false" (по
-      умолчанию false)
-      - q: поиск по тексту (ILIKE)
-      - source: фильтр по source
-    """
-    limit = int(request.args.get("limit") or 50)
-    offset = int(request.args.get("offset") or 0)
-    archived_str = request.args.get("archived") or "false"
-    archived = archived_str.lower() == "true"
-    q = (request.args.get("q") or "").strip()
-    source_filter = (request.args.get("source") or "").strip()
-
-    conn = get_conn()
-    cur = conn.cursor()
+    # уведомление в бота о новой вакансии
     try:
-        sql = """
-            SELECT id, source, source_name, external_id, url, text, sender_username,
-                   created_at, received_at, archived
-            FROM jobs
-        """
-        where_parts = []
-        params = []
-        if archived:
-            where_parts.append("archived = TRUE")
+        src_label = source_name or source
+        msg_lines = [
+            "🔔 Новая вакансия",
+            f"Источник: <b>{src_label}</b>",
+        ]
+        if sender_username:
+            msg_lines.append(f"Автор: @{sender_username}")
+        msg_lines.append("")
+        if len(text) > 200:
+            msg_lines.append(text[:200] + "…")
         else:
-            where_parts.append("archived = FALSE")
+            msg_lines.append(text)
+        if url:
+            msg_lines.append("")
+            msg_lines.append(url)
 
-        if q:
-            where_parts.append("text ILIKE %s")
-            params.append(f"%{q}%")
+        send_alert_human("\n".join(msg_lines))
+    except Exception as e:
+        logger.error("Failed to send new job alert: %s", e)
 
-        if source_filter:
-            where_parts.append("source = %s")
-            params.append(source_filter)
-
-        if where_parts:
-            sql += " WHERE " + " AND ".join(where_parts)
-
-        sql += " ORDER BY id DESC LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
-
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-
-    jobs = []
-    for r in rows:
-        jobs.append(
-            {
-                "id": r["id"],
-                "source": r["source"],
-                "source_name": r["source_name"],
-                "external_id": r["external_id"],
-                "url": r["url"],
-                "text": r["text"],
-                "sender_username": r["sender_username"],
-                "created_at": r["created_at"].isoformat()
-                if r["created_at"]
-                else None,
-                "received_at": r["received_at"].isoformat()
-                if r["received_at"]
-                else None,
-                "archived": r["archived"],
-            }
-        )
-
-    return jsonify({"jobs": jobs})
+    return jsonify({"status": "ok", "id": job_id})
 
 
 @app.route("/api/jobs/<int:job_id>/archive", methods=["POST"])
-def api_archive_job(job_id: int):
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "UPDATE jobs SET archived = TRUE WHERE id = %s RETURNING id", (job_id,)
-        )
-        row = cur.fetchone()
-        conn.commit()
-    finally:
-        conn.close()
+def archive_job(job_id):
+    admin, err = _require_admin()
+    if err:
+        return err
 
-    if not row:
-        return jsonify({"error": "not_found"}), 404
+    data = get_json()
+    archived = bool(data.get("archived", True))
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE jobs SET archived = %s WHERE id = %s",
+            (archived, job_id),
+        )
+        conn.commit()
 
     return jsonify({"status": "ok"})
 
 
-# ---------------- Allowed users ----------------
-
-@app.route("/api/allowed_users", methods=["GET"])
-def api_list_allowed_users():
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "SELECT id, user_id, username, created_at FROM allowed_users ORDER BY id DESC"
-        )
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-
-    users = []
-    for r in rows:
-        users.append(
-            {
-                "id": r["id"],
-                "user_id": r["user_id"],
-                "username": r["username"],
-                "created_at": r["created_at"].isoformat()
-                if r["created_at"]
-                else None,
-            }
-        )
-
-    return jsonify({"users": users})
-
-
-@app.route("/api/allowed_users", methods=["POST"])
-def api_add_allowed_user():
-    data = request.get_json(silent=True) or {}
-    username = _username_norm(data.get("username"))
-    user_id = data.get("user_id")
-
-    if not username:
-        return jsonify({"error": "username_required"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO allowed_users (user_id, username, created_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (username) DO NOTHING
-            RETURNING id
-            """,
-            (user_id, username),
-        )
-        row = cur.fetchone()
-        conn.commit()
-    finally:
-        conn.close()
-
-    if row:
-        return jsonify({"status": "ok", "id": row["id"]})
-    return jsonify({"status": "ok", "exists": True})
-
-
-@app.route("/api/allowed_users/<int:user_id>", methods=["DELETE"])
-def api_delete_allowed_user(user_id: int):
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute("DELETE FROM allowed_users WHERE id = %s", (user_id,))
-        conn.commit()
-    finally:
-        conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-# ---------------- Parser secrets (FB cookies, TG session) ----------------
-
-@app.route("/api/parser_secrets", methods=["GET"])
-def api_list_parser_secrets():
-    if not _is_admin_request():
-        return jsonify({"error": "admin_forbidden"}), 403
-
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            SELECT key, value, updated_at
-            FROM parser_secrets
-            ORDER BY key
-            """
-        )
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-
-    res = []
-    for r in rows:
-        res.append(
-            {
-                "key": r["key"],
-                "value": r["value"],
-                "updated_at": r["updated_at"].isoformat()
-                if r["updated_at"]
-                else None,
-            }
-        )
-
-    return jsonify({"secrets": res})
-
+# ---- parser secrets / statuses ----
 
 @app.route("/api/parser_secrets/<key>", methods=["GET"])
-def api_get_parser_secret(key: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "SELECT key, value, updated_at FROM parser_secrets WHERE key = %s",
-            (key,),
-        )
-        row = cur.fetchone()
-    finally:
-        conn.close()
+def get_parser_secret(key):
+    with get_conn() as conn:
+        value = get_secret(conn, key)
+    return jsonify({"key": key, "value": value})
 
-    if not row:
-        return jsonify({"key": key, "value": None, "updated_at": None})
+
+@app.route("/api/admin/parser_secrets/<key>", methods=["POST"])
+def set_parser_secret(key):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = get_json()
+    value = data.get("value")
+    with get_conn() as conn:
+        set_secret(conn, key, value)
+        conn.commit()
+    return jsonify({"status": "ok"})
+
+
+# Специальный ключ fb_cookies_json (полный JSON)
+@app.route("/api/admin/fb_cookies", methods=["POST"])
+def set_fb_cookies():
+    """
+    Сохраняем ПОЛНЫЙ JSON cookies из Apify в ключ fb_cookies_json.
+    Тело: {"value": "[{...}, ...]"}
+    """
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = get_json()
+    val = data.get("value")
+    if not val:
+        return jsonify({"error": "value_required"}), 400
+
+    # просто сохраняем как строку; валидацию JSON не навязываем
+    with get_conn() as conn:
+        set_secret(conn, "fb_cookies_json", val)
+        conn.commit()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/parser_secrets/fb_cookies_json", methods=["GET"])
+def get_fb_cookies_json():
+    with get_conn() as conn:
+        val = get_secret(conn, "fb_cookies_json")
+    return jsonify({"key": "fb_cookies_json", "value": val})
+
+
+@app.route("/api/parser_status/<key>", methods=["POST"])
+def set_parser_status(key):
+    data = get_json()
+    value = data.get("value")
+    with get_conn() as conn:
+        set_status(conn, key, value)
+        conn.commit()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/parser_status/<key>", methods=["GET"])
+def get_parser_status(key):
+    with get_conn() as conn:
+        val = get_status(conn, key)
+    return jsonify({"key": key, "value": val})
+
+
+@app.route("/api/alert", methods=["POST"])
+def api_alert():
+    data = get_json()
+    text = data.get("text") or ""
+    if not text:
+        return jsonify({"error": "text_required"}), 400
+
+    send_alert_human(text)
+    return jsonify({"status": "ok"})
+
+
+# ---- admin overview ----
+
+@app.route("/api/admin/secrets", methods=["GET"])
+def admin_secrets_overview():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    with get_conn() as conn:
+        fb_cookies_updated_at = get_status(conn, "fb_cookies_updated_at")
+        tg_session_updated_at = get_status(conn, "tg_session_updated_at")
+        tg_auth_pending = get_status(conn, "tg_auth_pending")
 
     return jsonify(
         {
-            "key": row["key"],
-            "value": row["value"],
-            "updated_at": row["updated_at"].isoformat()
-            if row["updated_at"]
+            "fb_cookies_updated_at": fb_cookies_updated_at,
+            "tg_session_updated_at": tg_session_updated_at,
+            "tg_auth_pending": json.loads(tg_auth_pending)
+            if tg_auth_pending
             else None,
         }
     )
 
 
-@app.route("/api/parser_secrets/<key>", methods=["POST"])
-def api_set_parser_secret(key: str):
-    if not _is_admin_request():
-        return jsonify({"error": "admin_forbidden"}), 403
+# ---- Telegram auth через внешний сервис ----
 
-    data = request.get_json(silent=True) or {}
-    value = data.get("value")
-    if value is None:
-        return jsonify({"error": "value_required"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO parser_secrets (key, value, updated_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-            """,
-            (key, value),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-def _is_admin_request() -> bool:
-    """
-    Проверка, что запрос идёт от админа:
-      - либо по init_data (который прошёл check_access как admin)
-      - либо по заголовку X-ADMIN-USERNAME, совпадающему с admin username
-    """
-    init_data = request.headers.get("X-TG-INIT-DATA")
-    if init_data:
-        verified = verify_telegram_webapp(init_data)
-        if verified:
-            user_raw = verified.get("user")
-            user_obj = None
-            if user_raw:
-                try:
-                    user_obj = json.loads(user_raw)
-                except Exception:
-                    user_obj = None
-
-            if isinstance(user_obj, dict):
-                username_norm = _username_norm(user_obj.get("username"))
-                if is_admin(username_norm):
-                    user_id = user_obj.get("id")
-                    try:
-                        conn = get_conn()
-                        cur = conn.cursor()
-                        cur.execute(
-                            """
-                            INSERT INTO allowed_users (user_id, username, created_at)
-                            VALUES (%s, %s, NOW())
-                            ON CONFLICT (username) DO NOTHING
-                            """,
-                            (user_id, username_norm),
-                        )
-                        conn.commit()
-                    except Exception:
-                        pass
-                    finally:
-                        conn.close()
-
-                    return True
-
-    admin_username = request.headers.get("X-ADMIN-USERNAME")
-    if admin_username:
-        if is_admin(_username_norm(admin_username)):
-            return True
-
-    logger.warning("init_data verification failed, falling back to X-ADMIN-USERNAME")
-    return False
-
-
-# ---------------- Parser status (для алертов) ----------------
-
-def _get_last_alert_time(key: str) -> Optional[datetime]:
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "SELECT value, updated_at FROM parser_secrets WHERE key = %s",
-            (key,),
-        )
-        row = cur.fetchone()
-    finally:
-        conn.close()
-
-    if not row:
-        return None
-    try:
-        return datetime.fromisoformat(row["value"])
-    except Exception:
-        return None
-
-
-def _set_last_alert_time(key: str, dt: datetime):
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO parser_secrets (key, value, updated_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-            """,
-            (key, dt.isoformat()),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-@app.route("/api/parser_status/<key>", methods=["POST"])
-def api_parser_status(key: str):
-    """
-    Сюда парсеры могут слать статусы, например:
-      - fb_last_ok / tg_last_ok — время последнего успешного прохода
-      - tg_auth_required — "true"/"false"
-    """
-    data = request.get_json(silent=True) or {}
-    value = data.get("value")
-    if value is None:
-        return jsonify({"error": "value_required"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO parser_status (key, value, updated_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-            """,
-            (key, value),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    return jsonify({"status": "ok"})
-
-
-@app.route("/api/parser_status", methods=["GET"])
-def api_get_parser_status():
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT key, value, updated_at FROM parser_status")
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-
-    res = []
-    for r in rows:
-        res.append(
-            {
-                "key": r["key"],
-                "value": r["value"],
-                "updated_at": r["updated_at"].isoformat()
-                if r["updated_at"]
-                else None,
-            }
-        )
-    return jsonify({"status": "ok", "items": res})
-
-
-# ---------------- TG auth через внешний сервис ----------------
-
-TG_AUTH_SERVICE_URL = os.getenv("TG_AUTH_SERVICE_URL", "").rstrip("/")
-TG_AUTH_SERVICE_TOKEN = os.getenv("TG_AUTH_SERVICE_TOKEN", "")
-
-
-def set_secret(key: str, value: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            INSERT INTO parser_secrets (key, value, updated_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-            """,
-            (key, value),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-@app.route("/api/admin/secrets", methods=["GET"])
-def api_admin_get_secrets():
-    if not _is_admin_request():
-        return jsonify({"error": "admin_forbidden"}), 403
-
-    conn = get_conn()
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            """
-            SELECT key, value, updated_at
-            FROM parser_secrets
-            WHERE key IN ('fb_cookies_json', 'tg_session', 'tg_session_updated_at')
-            ORDER BY key
-            """
-        )
-        rows = cur.fetchall()
-    finally:
-        conn.close()
-
-    res = {}
-    for r in rows:
-        res[r["key"]] = {
-            "value": r["value"],
-            "updated_at": r["updated_at"].isoformat()
-            if r["updated_at"]
-            else None,
-        }
-
-    return jsonify({"status": "ok", "secrets": res})
-
-
-@app.route("/api/admin/fb_cookies", methods=["POST"])
-def api_admin_fb_cookies():
-    if not _is_admin_request():
-        return jsonify({"error": "admin_forbidden"}), 403
-
-    data = request.get_json(silent=True) or {}
-    value = data.get("value")
-    if value is None:
-        return jsonify({"error": "value_required"}), 400
-
-    set_secret("fb_cookies_json", value)
-    return jsonify({"status": "ok"})
+def _auth_service_headers():
+    headers = {"Content-Type": "application/json"}
+    if TG_AUTH_SERVICE_TOKEN:
+        headers["X-Auth-Token"] = TG_AUTH_SERVICE_TOKEN
+    return headers
 
 
 @app.route("/api/admin/tg_auth/start", methods=["POST"])
-def api_admin_tg_auth_start():
-    if not _is_admin_request():
-        return jsonify({"error": "admin_forbidden"}), 403
+def tg_auth_start():
+    """
+    Старт авторизации: просим внешний сервис отправить код.
+    Тело: {"phone": "+7999..."}
+    """
+    admin, err = _require_admin()
+    if err:
+        return err
 
-    data = request.get_json(silent=True) or {}
+    if not TG_AUTH_SERVICE_URL:
+        return jsonify({"error": "auth_service_not_configured"}), 500
+
+    data = get_json()
     phone = (data.get("phone") or "").strip()
     if not phone:
         return jsonify({"error": "phone_required"}), 400
 
-    if not TG_AUTH_SERVICE_URL or not TG_AUTH_SERVICE_TOKEN:
-        logger.error(
-            "tg_auth_start: TG_AUTH_SERVICE_URL / TG_AUTH_SERVICE_TOKEN not configured"
-        )
-        return jsonify({"error": "tg_auth_service_not_configured"}), 500
-
-    logger.info("tg_auth_start requested for phone=%s", phone)
+    logger.info("tg_auth_start requested by %s for phone=%s", admin, phone)
 
     try:
-        resp = requests.post(
-            f"{TG_AUTH_SERVICE_URL}/auth/start",
-            headers={"X-API-KEY": TG_AUTH_SERVICE_TOKEN},
+        resp = httpx.post(
+            TG_AUTH_SERVICE_URL + "/auth/start",
             json={"phone": phone},
+            headers=_auth_service_headers(),
             timeout=30,
         )
-    except Exception as e:
+        resp.raise_for_status()
+        result = resp.json()
+    except httpx.HTTPError as e:
         logger.error("tg_auth_start: http error: %s", e)
-        return jsonify({"error": "tg_auth_http_error"}), 500
+        return jsonify({"error": "auth_service_http_error"}), 500
 
-    if resp.status_code != 200:
-        logger.error(
-            "tg_auth_start: service error http=%s, body=%s",
-            resp.status_code,
-            resp.text,
-        )
-        try:
-            data = resp.json()
-            err = data.get("error")
-        except Exception:
-            err = "tg_auth_service_error"
-        return jsonify({"error": err}), 400
+    if not result.get("ok"):
+        logger.error("tg_auth_start: service error: %s", result)
+        return jsonify({"error": result.get("error", "auth_service_error")}), 400
 
-    try:
-        data = resp.json()
-    except Exception:
-        logger.error("tg_auth_start: invalid json from service: %s", resp.text)
-        return jsonify({"error": "tg_auth_service_invalid_json"}), 500
+    # сохраняем pending state
+    pending = {
+        "phone": phone,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    with get_conn() as conn:
+        set_status(conn, "tg_auth_pending", json.dumps(pending))
+        conn.commit()
 
-    status = data.get("status")
-    if status != "ok":
-        err = data.get("error") or "tg_auth_service_error"
-        logger.error("tg_auth_start: service error: %s", data)
-        return jsonify({"error": err}), 400
-
-    logger.info("tg_auth_start: code sent OK")
     return jsonify({"status": "ok"})
 
 
 @app.route("/api/admin/tg_auth/confirm", methods=["POST"])
-def api_admin_tg_auth_confirm():
-    if not _is_admin_request():
-        return jsonify({"error": "admin_forbidden"}), 403
+def tg_auth_confirm():
+    """
+    Подтверждение кода.
+    Тело: {"phone": "+7999...", "code": "12345", "password": "optional"}
+    """
+    admin, err = _require_admin()
+    if err:
+        return err
 
-    data_in = request.get_json(silent=True) or {}
-    phone = (data_in.get("phone") or "").strip()
-    code = (data_in.get("code") or "").strip()
-    password = (data_in.get("password") or "").strip()
+    if not TG_AUTH_SERVICE_URL:
+        return jsonify({"error": "auth_service_not_configured"}), 500
+
+    data = get_json()
+    phone = (data.get("phone") or "").strip()
+    code = (data.get("code") or "").strip()
+    password = (data.get("password") or "").strip() or None
 
     if not phone or not code:
         return jsonify({"error": "phone_and_code_required"}), 400
 
-    if not TG_AUTH_SERVICE_URL or not TG_AUTH_SERVICE_TOKEN:
-        return jsonify({"error": "tg_auth_service_not_configured"}), 500
-
-    logger.info("tg_auth_confirm requested for phone=%s", phone)
-
     try:
-        resp = requests.post(
-            f"{TG_AUTH_SERVICE_URL}/auth/confirm",
-            headers={"X-API-KEY": TG_AUTH_SERVICE_TOKEN},
-            json={"phone": phone, "code": code, "password": password or None},
+        resp = httpx.post(
+            TG_AUTH_SERVICE_URL + "/auth/confirm",
+            json={"phone": phone, "code": code, "password": password},
+            headers=_auth_service_headers(),
             timeout=60,
         )
-    except Exception as e:
+        resp.raise_for_status()
+        result = resp.json()
+    except httpx.HTTPError as e:
         logger.error("tg_auth_confirm: http error: %s", e)
-        return jsonify({"error": "tg_auth_http_error"}), 500
+        return jsonify({"error": "auth_service_http_error"}), 500
 
-    if resp.status_code != 200:
-        logger.error(
-            "tg_auth_confirm: service error http=%s, body=%s",
-            resp.status_code,
-            resp.text,
-        )
-        try:
-            data = resp.json()
-            err = data.get("error")
-        except Exception:
-            err = "tg_auth_service_error"
-        return jsonify({"error": err}), 400
+    if not result.get("ok"):
+        err_code = result.get("error", "auth_service_error")
+        logger.error("tg_auth_confirm error: %s", result)
+        return jsonify({"error": err_code}), 400
 
-    try:
-        data = resp.json()
-    except Exception:
-        logger.error("tg_auth_confirm: invalid json from service: %s", resp.text)
-        return jsonify({"error": "tg_auth_service_invalid_json"}), 500
+    session = result.get("session")
+    if not session:
+        return jsonify({"error": "no_session_returned"}), 500
 
-    status = data.get("status")
-    if status != "ok":
-        err = data.get("error") or "tg_auth_service_error"
-        logger.error("tg_auth_confirm: service error: %s", data)
-        return jsonify({"error": err}), 400
+    # сохраняем сессию и статус
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        set_secret(conn, "tg_session", session)
+        set_status(conn, "tg_session_updated_at", now)
+        set_status(conn, "tg_auth_pending", None)
+        conn.commit()
 
-    session_str = data.get("session")
-    if not session_str:
-        logger.error("tg_auth_confirm: no session in service response: %s", data)
-        return jsonify({"error": "tg_auth_no_session_in_response"}), 500
-
-    # сохраняем сессию и время обновления
-    set_secret("tg_session", session_str)
-    set_secret("tg_session_updated_at", datetime.now(timezone.utc).isoformat())
-
-    logger.info("tg_auth_confirm: session saved to parser_secrets[tg_session]")
+    logger.info("tg_auth_confirm: new session saved at %s", now)
 
     return jsonify({"status": "ok"})
 
 
-# ---------------- Main ----------------
+# ---- ручное управление TG-сессией ----
+
+@app.route("/api/admin/tg_session", methods=["POST"])
+def admin_set_tg_session():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = get_json()
+    session = (data.get("session") or "").strip()
+    if not session:
+        return jsonify({"error": "session_required"}), 400
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        set_secret(conn, "tg_session", session)
+        set_status(conn, "tg_session_updated_at", now)
+        conn.commit()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/admin/tg_session/check", methods=["GET"])
+def admin_check_tg_session():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    with get_conn() as conn:
+        session_str = get_secret(conn, "tg_session")
+
+    if not session_str:
+        return jsonify({"ok": False, "reason": "no_session"})
+
+    async def _check():
+        try:
+            async with TelegramClient(
+                StringSession(session_str),
+                TG_API_ID,
+                TG_API_HASH,
+            ) as client:
+                me = await client.get_me()
+                return {"ok": True, "me": {"id": me.id, "username": me.username}}
+        except (AuthKeyUnregisteredError, SessionRevokedError):
+            return {"ok": False, "reason": "session_invalid"}
+        except Exception as e:
+            logger.exception("check_tg_session error")
+            return {"ok": False, "reason": str(e)}
+
+    result = asyncio.run(_check())
+    return jsonify(result)
+
+
+# ---- watchdog endpoint для парсеров ----
+
+@app.route("/api/watchdog", methods=["POST"])
+def watchdog():
+    """
+    Парсеры могут сюда слать периодические статусы.
+    Например:
+      {"source": "tg_parser", "status": "auth_error"}
+    """
+    data = get_json()
+    source = data.get("source") or "unknown"
+    status = data.get("status") or "unknown"
+    ts = datetime.now(timezone.utc).isoformat()
+
+    key = f"watchdog:{source}"
+    with get_conn() as conn:
+        set_status(conn, key, json.dumps({"status": status, "ts": ts}))
+        conn.commit()
+
+    alerts = []
+    # пример: если tg_parser сообщил, что нет авторизации
+    if source == "tg_parser" and status == "auth_required":
+        alerts.append(
+            "🔔 tg_parser:\nTelegram парсер: сессия не авторизована.\n"
+            "Открой миниапп → ⚙️ Настройки → Аккаунты → Telegram сессия и пересоздай её."
+        )
+
+    if alerts:
+        send_alert_human("🔔 Watchdog:\n" + "\n".join(alerts))
+
+    return jsonify({"status": "ok", "alerts": alerts})
+
+
+# ---- main ----
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT") or 8080)
-    logger.info("Запуск Flask на порту %s", port)
-    app.run(host="0.0.0.0", port=port)
+    logger.info("Инициализация БД...")
+    init_db()
+    logger.info("Запуск Flask на порту %s", PORT)
+    logger.info(
+        "TG_API_ID_DEFAULT=%s, BOT_TOKEN set=%s, ADMIN_CHAT_ID=%s",
+        TG_API_ID_DEFAULT,
+        bool(BOT_TOKEN),
+        ADMIN_CHAT_ID,
+    )
+    app.run(host="0.0.0.0", port=PORT)
