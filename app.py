@@ -49,6 +49,30 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID") or ADMIN_CHAT_ID_DEFAULT
 ADMINS_RAW = os.getenv("ADMINS", "")
 
 API_SECRET = os.getenv("API_SECRET", "")
+def _get_parser_key_from_request() -> str | None:
+    """
+    Parser auth: either X-API-KEY: <secret> or Authorization: Bearer <secret>.
+    Returns the provided key or None if no auth headers present.
+    """
+    x = request.headers.get("X-API-KEY")
+    if x is not None:
+        return x
+    auth = request.headers.get("Authorization")
+    if auth and auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return None
+
+
+def _require_parser_key():
+    """
+    If API_SECRET is set, require a correct parser key.
+    Returns (ok: bool, flask_response_or_none)
+    """
+    provided = _get_parser_key_from_request()
+    if API_SECRET:
+        if provided is None or provided != API_SECRET:
+            return False, (jsonify({"error": "forbidden"}), 403)
+    return True, None
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # ==== rate-limit для алертов (по умолчанию 1 раз в час) ====
@@ -518,16 +542,25 @@ def send_alert_human(text: str):
 
 @app.route("/api/alert", methods=["POST"])
 def api_alert():
-    if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
-        return jsonify({"error": "forbidden"}), 403
+    ok, err = _require_parser_key()
+    # алерты может слать и админ миниаппа без парсер-ключа
+    if not ok:
+        # если ключ вообще не передали — позволим админскому доступу
+        if _get_parser_key_from_request() is None:
+            admin, aerr = _require_admin()
+            if aerr:
+                return aerr
+        else:
+            return err
 
     data = request.get_json(silent=True) or {}
-    text = data.get("text")
+    text = data.get("text") or data.get("message")
     if not text:
         return jsonify({"error": "text_required"}), 400
 
     send_alert_human(text)
     return jsonify({"status": "ok"})
+
 
 
 # ---- Parser secrets / statuses (FB cookies, TG session и т.п.) ----
@@ -539,15 +572,14 @@ def get_parser_secret(key: str):
     Получение секретов для парсеров (fb_cookies_json, tg_session и т.п.).
 
     Доступ:
-      - либо внешний парсер с заголовком X-API-KEY == API_SECRET,
-      - либо админ миниаппа (через X-ADMIN-USERNAME / _require_admin()).
+      - либо внешний парсер с X-API-KEY == API_SECRET или Authorization: Bearer,
+      - либо админ миниаппа.
     """
-    # Если пришёл X-API-KEY — это запрос от парсера, проверяем секрет
-    if request.headers.get("X-API-KEY") is not None:
-        if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
+    provided = _get_parser_key_from_request()
+    if provided is not None:
+        if API_SECRET and provided != API_SECRET:
             return jsonify({"error": "forbidden"}), 403
     else:
-        # Иначе считаем, что это миниапп, требуем админ-доступ
         admin, err = _require_admin()
         if err:
             return err
@@ -564,29 +596,25 @@ def get_parser_secret(key: str):
         }
     )
 
-
 @app.route("/api/parser_status/<key>", methods=["POST"])
 def set_parser_status(key: str):
-    if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
-        return jsonify({"error": "forbidden"}), 403
+    ok, err = _require_parser_key()
+    if not ok:
+        return err
 
     data = request.get_json(silent=True) or {}
     value = data.get("value")
     set_status(key, value)
 
     # специальные статусы от парсеров:
-    if key == "fb_last_ok":
-        pass
-    elif key == "tg_last_ok":
-        pass
-    elif key == "tg_auth_required":
-        # парсер говорит, что сессия отвалилась, нужно перелогиниться
+    if key == "tg_auth_required":
         send_alert_human(
             "🔔 tg_parser:\nTelegram парсер: сессия не авторизована.\n"
             "Открой миниапп → ⚙️ Настройки → Аккаунты → Telegram сессия и пересоздай её."
         )
 
     return jsonify({"status": "ok"})
+
 
 
 # ---- Admin: получение статусов / секретов ----
