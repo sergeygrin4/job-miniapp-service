@@ -999,25 +999,26 @@
     }
   }
 
-  // --- FB cookies: полный JSON ---
-  async function saveFbCookiesJson() {
-    const txt = $("fb-cookies-json-input").value.trim();
-    if (!txt) {
-      showFlash("Вставь JSON cookies", true);
-      return;
-    }
-    try {
-      await apiFetch("/api/admin/fb_cookies", {
-        method: "POST",
-        admin: true,
-        body: { value: txt },
-      });
-      showFlash("FB cookies JSON сохранён");
-    } catch (e) {
-      console.error(e);
-      showFlash("Ошибка сохранения FB cookies JSON: " + e.message, true);
-    }
+ // --- FB cookies: полный JSON ---
+async function saveFbCookiesJson() {
+  const txt = $("fb-cookies-json-input").value.trim();
+  if (!txt) {
+    showFlash("Вставь JSON cookies", true);
+    return;
   }
+  try {
+    await apiFetch("/api/admin/fb_cookies", {
+      method: "POST",
+      admin: true,
+      body: { cookies_json: txt }, // <- ключ меняем на cookies_json
+    });
+    showFlash("FB cookies JSON сохранён");
+  } catch (e) {
+    console.error(e);
+    showFlash("Ошибка сохранения FB cookies JSON: " + e.message, true);
+  }
+}
+
 
   // --- FB cookies: динамичные значения ---
   async function saveFbCookiesDynamic() {
@@ -1115,18 +1116,16 @@
         return;
       }
 
-      const newJson = JSON.stringify(cookies);
+            const newJson = JSON.stringify(cookies);
 
       await apiFetch("/api/admin/fb_cookies", {
         method: "POST",
         admin: true,
-        body: { value: newJson },
+        body: { cookies_json: newJson }, // <- тоже cookies_json
       });
 
       showFlash(`Динамичные cookies обновлены (обновлено полей: ${matched}).`);
-    } catch (e) {
-      console.error("saveFbCookiesDynamic error", e);
-      showFlash("Ошибка обновления динамичных FB cookies: " + e.message, true);
+
     }
   }
 
