@@ -108,36 +108,43 @@ def _verify_tg_init_data(init_data: str) -> Optional[dict]:
 def _get_admin_from_request() -> Optional[dict]:
     """
     Определяем админа:
-    - сначала по Telegram WebApp initData
-    - если нет, по X-ADMIN-USERNAME (для отладки).
+    1) пробуем валидировать Telegram WebApp initData;
+    2) если не получилось / нет initData — падаем на X-ADMIN-USERNAME.
     """
+    # 1. Пробуем initData от Telegram
     init_data = request.headers.get("X-TG-INIT-DATA") or ""
     if init_data:
         verified = _verify_tg_init_data(init_data)
         if verified:
             user_raw = verified.get("user")
+            user_obj = None
             if user_raw:
                 try:
                     user_obj = json.loads(user_raw)
                 except Exception:
                     user_obj = None
 
-                if isinstance(user_obj, dict):
-                    username_norm = _username_norm(user_obj.get("username"))
-                    if is_admin(username_norm):
-                        user_id = user_obj.get("id")
-                        try:
-                            user_id = int(user_id) if user_id is not None else None
-                        except Exception:
-                            user_id = None
-                        return {"user_id": user_id, "username_norm": username_norm}
+            if isinstance(user_obj, dict):
+                username_norm = _username_norm(user_obj.get("username"))
+                if is_admin(username_norm):
+                    user_id = user_obj.get("id")
+                    try:
+                        user_id = int(user_id) if user_id is not None else None
+                    except Exception:
+                        user_id = None
+                    return {"user_id": user_id, "username_norm": username_norm}
+        else:
+            # Если подпись не сошлась — логируем и пробуем X-ADMIN-USERNAME.
+            logger.warning("init_data verification failed, falling back to X-ADMIN-USERNAME")
 
+    # 2. Фоллбек по заголовку X-ADMIN-USERNAME
     username_hdr = request.headers.get("X-ADMIN-USERNAME") or ""
     username_norm = _username_norm(username_hdr)
     if is_admin(username_norm):
         return {"user_id": None, "username_norm": username_norm}
 
     return None
+
 
 
 def _require_admin():
