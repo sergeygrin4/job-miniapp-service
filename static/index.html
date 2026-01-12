@@ -1162,8 +1162,6 @@ async function saveFbCookiesDynamic() {
         return;
       }
 
-      let storedJson = secretData.value;
-
     const secretData = await secretRes.json();
     let storedJson = secretData.value;
     if (!storedJson) {
