@@ -136,15 +136,23 @@ def get_json():
 @app.route("/check_access", methods=["POST"])
 def check_access():
     """
-    Миниапп при заходе дергает этот эндпоинт и передаёт username / user_id.
+    Проверка доступа в миниапп.
+
+    username берём:
+      1) из JSON (data.username), если есть
+      2) иначе из заголовка X-ADMIN-USERNAME (как было раньше).
+
     Доступ есть, если:
-      - username в ADMINS (переменная окружения ADMINS), ИЛИ
+      - username в ADMINS, ИЛИ
       - username есть в таблице allowed_users.
-    Админов автоматически добавляем в allowed_users при первом заходе.
+    Админа автоматически добавляем в allowed_users при первом заходе.
     """
     data = get_json()
-    username = data.get("username")
-    user_id = data.get("user_id")
+
+    username = data.get("username") or request.headers.get("X-ADMIN-USERNAME")
+    user_id = data.get("user_id") or data.get("id")
+
+    logger.info("check_access: username=%r user_id=%r", username, user_id)
 
     u_norm = _username_norm(username)
     is_admin_flag = is_admin(username)
@@ -154,7 +162,7 @@ def check_access():
         cur = conn.cursor()
 
         if u_norm:
-            # есть ли в allowed_users
+            # проверяем, есть ли в allowed_users
             cur.execute(
                 "SELECT 1 FROM allowed_users WHERE username = %s LIMIT 1",
                 (u_norm,),
@@ -183,6 +191,7 @@ def check_access():
             "user_id": user_id,
         }
     )
+
 
 
 @app.route("/api/allowed_users", methods=["GET", "POST", "DELETE"])
