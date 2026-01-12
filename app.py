@@ -52,7 +52,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # ==== rate-limit для алертов (по умолчанию 1 раз в час) ====
 ALERT_RATE_LIMIT_SECONDS = int(os.getenv("ALERT_RATE_LIMIT_SECONDS") or "3600")
-_last_alert_sent_at = {}
+_last_alert_sent_at: dict[str, datetime] = {}
 # ==========================================================
 
 TELEGRAM_BOT_TOKEN = BOT_TOKEN
@@ -153,7 +153,6 @@ def _get_admin_from_request() -> Optional[dict]:
     return None
 
 
-
 def _require_admin():
     admin = _get_admin_from_request()
     if not admin:
@@ -171,8 +170,6 @@ def _iso(dt):
 
 
 # ---- Алерты в телеграм ----
-
-# ---------------- Alerts ----------------
 
 def send_alert_human(text: str):
     """
@@ -199,18 +196,6 @@ def send_alert_human(text: str):
         return
 
     _last_alert_sent_at[key] = now
-
-    try:
-        # через requests напрямую в Telegram API
-        resp = requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={"chat_id": ADMIN_CHAT_ID, "text": text},
-            timeout=10,
-        )
-        resp.raise_for_status()
-    except Exception as e:
-        logger.error("Failed to send alert: %s", e)
-
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
@@ -835,6 +820,25 @@ def api_admin_tg_session_check():
 
 # ---- Telegram auth через внешний tg_auth_service ----
 
+def _call_tg_auth_service(path: str, payload: dict) -> tuple[int, dict]:
+    """
+    Синхронный вызов внешнего tg_auth_service.
+    Возвращает (status_code, json_dict).
+    """
+    if not TG_AUTH_SERVICE_URL or not TG_AUTH_SERVICE_TOKEN:
+        raise RuntimeError("auth_service_not_configured")
+
+    url = TG_AUTH_SERVICE_URL + path
+    headers = {"Authorization": f"Bearer {TG_AUTH_SERVICE_TOKEN}"}
+
+    resp = httpx.post(url, json=payload, headers=headers, timeout=30.0)
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    return resp.status_code, data
+
+
 @app.route("/api/admin/tg_auth/start", methods=["POST"])
 def api_admin_tg_auth_start():
     """
@@ -845,34 +849,23 @@ def api_admin_tg_auth_start():
     if err:
         return err
 
-    if not TG_AUTH_SERVICE_URL or not TG_AUTH_SERVICE_TOKEN:
-        return jsonify({"error": "auth_service_not_configured"}), 500
-
     data = request.get_json(silent=True) or {}
     phone = (data.get("phone") or "").strip()
     if not phone:
         return jsonify({"error": "phone_required"}), 400
 
+    logger.info("tg_auth_start requested by %s for phone=%s", admin["username_norm"], phone)
+
     try:
-        resp = httpx.post(
-            TG_AUTH_SERVICE_URL + "/auth/start",
-            json={"phone": phone},
-            headers={"X-AUTH-TOKEN": TG_AUTH_SERVICE_TOKEN},
-            timeout=15.0,
-        )
+        status, result = _call_tg_auth_service("/auth/start", {"phone": phone})
     except Exception as e:
         logger.error("tg_auth_start: http error: %s", e)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "http_error", "details": str(e)}), 500
 
-    try:
-        j = resp.json()
-    except Exception:
-        j = None
-
-    if resp.status_code != 200:
-        msg = (j and j.get("error")) or ("HTTP " + str(resp.status_code))
-        logger.error("tg_auth_start: service error: %s", msg)
-        return jsonify({"error": msg}), 500
+    if status != 200 or not result.get("ok"):
+        msg = result.get("error") or f"HTTP {status}"
+        logger.error("tg_auth_start: service error: %s (result=%r)", msg, result)
+        return jsonify({"error": msg}), 400
 
     return jsonify({"status": "ok"})
 
@@ -887,9 +880,6 @@ def api_admin_tg_auth_confirm():
     if err:
         return err
 
-    if not TG_AUTH_SERVICE_URL or not TG_AUTH_SERVICE_TOKEN:
-        return jsonify({"error": "auth_service_not_configured"}), 500
-
     data = request.get_json(silent=True) or {}
     phone = (data.get("phone") or "").strip()
     code = (data.get("code") or "").strip()
@@ -900,34 +890,34 @@ def api_admin_tg_auth_confirm():
     if not code:
         return jsonify({"error": "code_required"}), 400
 
+    logger.info(
+        "tg_auth_confirm requested by %s for phone=%s",
+        admin["username_norm"],
+        phone,
+    )
+
     try:
-        resp = httpx.post(
-            TG_AUTH_SERVICE_URL + "/auth/confirm",
-            json={"phone": phone, "code": code, "password": password},
-            headers={"X-AUTH-TOKEN": TG_AUTH_SERVICE_TOKEN},
-            timeout=30.0,
+        status, result = _call_tg_auth_service(
+            "/auth/confirm",
+            {"phone": phone, "code": code, "password": password},
         )
     except Exception as e:
         logger.error("tg_auth_confirm: http error: %s", e)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "http_error", "details": str(e)}), 500
 
-    try:
-        j = resp.json()
-    except Exception:
-        j = None
+    if status != 200 or not result.get("ok"):
+        msg = result.get("error") or f"HTTP {status}"
+        logger.error("tg_auth_confirm: service error: %s (result=%r)", msg, result)
+        return jsonify({"error": msg}), 400
 
-    if resp.status_code != 200 or not j or j.get("status") != "ok":
-        msg = (j and (j.get("error") or j.get("message"))) or ("HTTP " + str(resp.status_code))
-        logger.error("tg_auth_confirm: service error: %s", msg)
-        return jsonify({"error": msg}), 500
-
-    session_str = j.get("session")
+    session_str = result.get("session")
     if not session_str:
         return jsonify({"error": "no_session_returned"}), 500
 
     set_secret("tg_session", session_str)
     set_status("tg_auth_pending", "")
 
+    logger.info("tg_auth_confirm: tg_session saved, length=%d", len(session_str))
     return jsonify({"status": "ok"})
 
 
