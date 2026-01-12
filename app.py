@@ -396,20 +396,10 @@ def api_archive_job(job_id: int):
 
 
 
+# ---- Jobs (вакансии) ----
+
 @app.route("/post", methods=["POST"])
-def receive_post():
-    """
-    Endpoint, куда шлют FB и TG парсеры.
-    Тело:
-    {
-      "source": "...",
-      "source_name": "...",
-      "external_id": "...",
-      "url": "...",
-      "text": "...",
-      "sender_username": "..."
-    }
-    """
+def add_job():
     data = request.get_json(silent=True) or {}
 
     source = (data.get("source") or "").strip()
@@ -418,51 +408,55 @@ def receive_post():
     url = (data.get("url") or "").strip()
     text = (data.get("text") or "").strip()
     sender_username = (data.get("sender_username") or "").strip()
+    created_at = data.get("created_at")
 
-    if not source or not external_id:
-        return jsonify({"error": "source_and_external_id_required"}), 400
+    # Обязательные поля
+    if not source or not external_id or not text:
+        return jsonify({"error": "bad_request"}), 400
 
-    now = datetime.now(timezone.utc)
+    # created_at → datetime (если прилетает timestamp или ISO-строка)
+    created_at_dt = None
+    if created_at:
+        try:
+            if isinstance(created_at, (int, float)):
+                created_at_dt = datetime.fromtimestamp(
+                    float(created_at), tz=timezone.utc
+                )
+            elif isinstance(created_at, str):
+                created_at_dt = datetime.fromisoformat(
+                    created_at.replace("Z", "+00:00")
+                )
+        except Exception:
+            created_at_dt = None
 
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO jobs (
-                source,
-                source_name,
-                external_id,
-                url,
-                text,
-                sender_username,
-                created_at,
-                received_at,
-                archived
-            )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
-            ON CONFLICT (source, external_id) DO UPDATE
-            SET
-                text = EXCLUDED.text,
-                url = EXCLUDED.url,
-                sender_username = EXCLUDED.sender_username,
-                received_at = EXCLUDED.received_at
-            RETURNING id
-            """,
-            (
-                source,
-                source_name,
-                external_id,
-                url,
-                text,
-                sender_username,
-                now,
-                now,
-            ),
-        )
-        row = cur.fetchone()
-        conn.commit()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (external_id, source) DO NOTHING
+        RETURNING id
+        """,
+        (
+            source,
+            source_name or source,
+            external_id,
+            url,
+            text,
+            sender_username,
+            created_at_dt,
+        ),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
 
-    return jsonify({"status": "ok", "id": row[0] if row else None})
+    # ВАЖНО: cursor = RealDictCursor → берём row["id"], а не row[0]
+    if row:
+        return jsonify({"status": "ok", "id": row["id"]})
+    return jsonify({"status": "ok", "id": None})
+
 
 
 # ---- Alerts ----
@@ -615,9 +609,15 @@ def api_admin_get_secrets():
 
 # ---- Admin: FB cookies ----
 
-
 @app.route("/api/admin/fb_cookies", methods=["POST"])
 def api_admin_set_fb_cookies():
+    """
+    Сохраняем полный JSON cookies, который выдаёт Apify.
+
+    На вход:
+      - cookies_json: строка с JSON (массив объектов cookies)
+      - или cookies: уже распарсенный массив (тоже сохраняем как JSON)
+    """
     admin, err = _require_admin()
     if err:
         return err
@@ -625,81 +625,29 @@ def api_admin_set_fb_cookies():
     data = request.get_json(silent=True) or {}
     cookies_json = data.get("cookies_json")
     cookies = data.get("cookies")
-    if not cookies_json and not cookies:
-        return jsonify({"error": "cookies_required"}), 400
 
-    if cookies_json:
-        # сохраняем как строку
-        set_secret("fb_cookies_json", str(cookies_json))
-        return jsonify({"status": "ok", "mode": "json"})
+    # Если прислали структурированные cookies — сериализуем
+    if cookies is not None:
+        try:
+            cookies_json = json.dumps(cookies, ensure_ascii=False)
+        except Exception:
+            return jsonify({"error": "cookies_must_be_json_serializable"}), 400
 
-    # иначе ожидаем массив объектов cookies (Apify формат)
+    # Если в итоге так ничего и не получили
+    if not cookies_json or not str(cookies_json).strip():
+        return jsonify({"error": "cookies_json_required"}), 400
+
+    # Проверяем, что это корректный JSON и именно список
     try:
-        cookies_list = json.loads(cookies)
-        if not isinstance(cookies_list, list):
-            raise ValueError
+        parsed = json.loads(str(cookies_json))
+        if not isinstance(parsed, list):
+            return jsonify({"error": "cookies_json_must_be_list"}), 400
     except Exception:
-        return jsonify({"error": "invalid_cookies_format"}), 400
+        return jsonify({"error": "cookies_json_invalid"}), 400
 
-    set_secret("fb_cookies_json", json.dumps(cookies_list, ensure_ascii=False))
-    return jsonify({"status": "ok", "mode": "list"})
-
-
-@app.route("/api/admin/fb_cookies_dynamic", methods=["POST"])
-def api_admin_set_fb_cookies_dynamic():
-    """
-    Обновление только динамичных значений (например, c_user, xs, fr).
-    Принимаем строку вида:
-    c_user=...; xs=...; fr=...
-    """
-    admin, err = _require_admin()
-    if err:
-        return err
-
-    data = request.get_json(silent=True) or {}
-    raw = (data.get("cookie_kv") or "").strip()
-    if not raw:
-        return jsonify({"error": "cookie_kv_required"}), 400
-
-    mapping = {}
-    for part in raw.replace("\n", ";").split(";"):
-        part = part.strip()
-        if not part or "=" not in part:
-            continue
-        k, v = part.split("=", 1)
-        k = k.strip()
-        v = v.strip()
-        if k:
-            mapping[k] = v
-
-    if not mapping:
-        return jsonify({"error": "no_pairs"}), 400
-
-    base = get_secret("fb_cookies_json")
-    if not base or not base.get("value"):
-        return jsonify({"error": "no_base_cookies"}), 400
-
-    try:
-        cookies = json.loads(base["value"])
-        if not isinstance(cookies, list):
-            raise ValueError
-    except Exception:
-        return jsonify({"error": "invalid_base_cookies_json"}), 500
-
-    updated = 0
-    for c in cookies:
-        if not isinstance(c, dict):
-            continue
-        name = c.get("key") or c.get("name")
-        if name in mapping:
-            c["value"] = mapping[name]
-            updated += 1
-
-    if not updated:
-        return jsonify({"error": "no_keys_matched"}), 400
-
-    set_secret("fb_cookies_json", json.dumps(cookies, ensure_ascii=False))
-    return jsonify({"status": "ok", "updated": updated})
+    # Всё ок — сохраняем как строку
+    set_secret("fb_cookies_json", str(cookies_json))
+    return jsonify({"status": "ok"})
 
 
 # ---- Admin: Telegram StringSession (ручной ввод) ----
