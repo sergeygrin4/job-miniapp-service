@@ -10,6 +10,7 @@ from typing import Optional
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+import httpx
 from telegram import Bot
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -29,14 +30,14 @@ CORS(app)
 
 PORT = int(os.getenv("PORT", "8080"))
 
-# ==== ДЕФОЛТЫ (если env не настроен) ====
+# ---- Telegram / бот / админы ----
+
 TG_API_ID_DEFAULT = 34487940
 TG_API_HASH_DEFAULT = "6f1242a8c3796d44fb761364b35a83f0"
 
 BOT_TOKEN_DEFAULT = "7952407611:AAEG9eqd6KBmmatspCgpfx2bZtcU1YcdmWI"
 ADMIN_CHAT_ID_DEFAULT = "794618749"
 
-# ==== Bot / Admin ====
 BOT_TOKEN = (
     os.getenv("TELEGRAM_BOT_TOKEN")
     or os.getenv("BOT_TOKEN")
@@ -48,6 +49,10 @@ ADMINS_RAW = os.getenv("ADMINS", "")
 
 API_SECRET = os.getenv("API_SECRET", "")
 TELEGRAM_BOT_TOKEN = BOT_TOKEN
+
+# Внешний сервис для авторизации в Telegram
+TG_AUTH_SERVICE_URL = os.getenv("TG_AUTH_SERVICE_URL", "").rstrip("/")
+TG_AUTH_SERVICE_TOKEN = os.getenv("TG_AUTH_SERVICE_TOKEN", "")
 
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 
@@ -74,13 +79,7 @@ def is_admin(username_norm: Optional[str]) -> bool:
     return username_norm in ADMINS
 
 
-# ---------------- Telegram WebApp auth (initData) ----------------
-
 def _verify_tg_init_data(init_data: str) -> Optional[dict]:
-    """
-    Проверка подписи Telegram WebApp initData.
-    Возвращает dict, если подпись валидна, иначе None.
-    """
     if not init_data or not TELEGRAM_BOT_TOKEN:
         return None
 
@@ -108,12 +107,10 @@ def _verify_tg_init_data(init_data: str) -> Optional[dict]:
 
 def _get_admin_from_request() -> Optional[dict]:
     """
-    Админ-аутентификация для UI-запросов:
-      - заголовок X-TG-INIT-DATA (window.Telegram.WebApp.initData)
-      - если подпись валидна → username должен быть в ADMINS
-      - fallback: заголовок X-ADMIN-USERNAME (если initData не пришёл/невалиден)
+    Определяем админа:
+    - сначала по Telegram WebApp initData
+    - если нет, по X-ADMIN-USERNAME (для отладки).
     """
-    # 1) initData
     init_data = request.headers.get("X-TG-INIT-DATA") or ""
     if init_data:
         verified = _verify_tg_init_data(init_data)
@@ -135,7 +132,6 @@ def _get_admin_from_request() -> Optional[dict]:
                             user_id = None
                         return {"user_id": user_id, "username_norm": username_norm}
 
-    # 2) fallback: X-ADMIN-USERNAME
     username_hdr = request.headers.get("X-ADMIN-USERNAME") or ""
     username_norm = _username_norm(username_hdr)
     if is_admin(username_norm):
@@ -160,12 +156,12 @@ def _iso(dt):
         return None
 
 
-# ---------------- Alerts ----------------
+# ---- Алерты в телеграм ----
 
 def send_alert_human(text: str):
     """
     Простая синхронная отправка алерта в ADMIN_CHAT_ID.
-    Обходим python-telegram-bot и сразу ходим в HTTP API Telegram.
+    Используем прямой HTTP-запрос к Telegram Bot API.
     """
     if not BOT_TOKEN or not ADMIN_CHAT_ID:
         logger.warning("No bot/admin chat configured, alert skipped: %s", text)
@@ -188,7 +184,6 @@ def send_alert_human(text: str):
         logger.error("Failed to send alert: %s", e)
 
 
-
 @app.route("/api/alert", methods=["POST"])
 def api_alert():
     if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
@@ -204,14 +199,14 @@ def api_alert():
     return jsonify({"status": "ok"})
 
 
-# ---------------- Static ----------------
+# ---- Статическая страница (миниапп) ----
 
 @app.route("/")
 def index_page():
     return send_from_directory("static", "index.html")
 
 
-# ---------------- Jobs API ----------------
+# ---- Jobs (вакансии) ----
 
 @app.route("/post", methods=["POST"])
 def add_job():
@@ -350,7 +345,7 @@ def api_archive_job(job_id: int):
     return jsonify({"status": "ok"})
 
 
-# ---------------- Access control ----------------
+# ---- Доступ (allowed_users) ----
 
 @app.route("/check_access", methods=["POST"])
 def check_access():
@@ -468,7 +463,7 @@ def delete_allowed_user(allowed_id: int):
     return jsonify({"status": "ok"})
 
 
-# ---------------- Groups API ----------------
+# ---- Группы (fb_groups) ----
 
 @app.route("/api/groups", methods=["GET"])
 def api_get_groups():
@@ -494,7 +489,6 @@ def api_get_groups():
     return jsonify({"groups": groups})
 
 
-# Алиас для FB-парсера: он ходит на /api/fb_groups, отдаём то же самое
 @app.route("/api/fb_groups", methods=["GET"])
 def api_get_fb_groups():
     return api_get_groups()
@@ -569,14 +563,10 @@ def api_delete_group(group_id: int):
     return jsonify({"status": "ok"})
 
 
-# ---------------- Parser secrets / status ----------------
+# ---- Parser secrets & status ----
 
 @app.route("/api/parser_secrets/<key>", methods=["GET"])
 def api_get_parser_secret(key: str):
-    """
-    Для парсеров: получить секрет из БД.
-    Авторизация: X-API-KEY == API_SECRET (если задан).
-    """
     if API_SECRET and request.headers.get("X-API-KEY") != API_SECRET:
         return jsonify({"error": "forbidden"}), 403
 
@@ -597,11 +587,10 @@ def api_set_parser_status(key: str):
     return jsonify({"status": "ok"})
 
 
-# ---------------- Admin: secrets overview ----------------
+# ---- Admin: обзор секретов ----
 
 @app.route("/api/admin/secrets", methods=["GET"])
 def api_admin_secrets_overview():
-    """Статус секретов для UI (без значений)."""
     admin, err = _require_admin()
     if err:
         return err
@@ -626,12 +615,10 @@ def api_admin_secrets_overview():
     )
 
 
+# ---- Admin: FB cookies ----
+
 @app.route("/api/admin/fb_cookies", methods=["POST"])
 def api_admin_set_fb_cookies():
-    """
-    UI: сохранить FB cookies JSON (формат Apify cookie array).
-    Тело: {"cookies_json": "[...]"} или {"cookies": [...]}.
-    """
     admin, err = _require_admin()
     if err:
         return err
@@ -663,9 +650,8 @@ def api_admin_set_fb_cookies():
 @app.route("/api/admin/fb_cookies_dynamic", methods=["POST"])
 def api_admin_update_fb_cookies_dynamic():
     """
-    UI: обновить только "динамичные" значения cookies (c_user, xs, fr и т.п.).
-    Тело: {"cookie_kv": "c_user=...; xs=...; fr=..."}.
-    Берём сохранённый ранее fb_cookies_json, подменяем value для совпадающих key.
+    Обновление только динамичных ключей из одной строки:
+    xs=AAA; sb=BBB; fr=CCC ...
     """
     admin, err = _require_admin()
     if err:
@@ -720,9 +706,10 @@ def api_admin_update_fb_cookies_dynamic():
     return jsonify({"status": "ok", "updated": changed})
 
 
+# ---- Admin: Telegram session (ручной ввод) ----
+
 @app.route("/api/admin/tg_session", methods=["POST"])
 def api_admin_set_tg_session_manual():
-    """UI: вручную сохранить TG StringSession."""
     admin, err = _require_admin()
     if err:
         return err
@@ -736,12 +723,9 @@ def api_admin_set_tg_session_manual():
     return jsonify({"status": "ok"})
 
 
-# ---------------- Telegram login flow (semi-auto) ----------------
+# ---- Проверка активности TG-сессии ----
 
 def _tg_api_creds():
-    """
-    Берём API id/hash из env, а если их нет — используем дефолты.
-    """
     raw_id = os.getenv("TG_API_ID") or os.getenv("API_ID")
     if raw_id:
         try:
@@ -755,66 +739,7 @@ def _tg_api_creds():
     return api_id, api_hash
 
 
-async def _tg_send_code(phone: str):
-    """
-    Отправка кода на указанный телефон.
-    Пробуем запросить именно SMS (force_sms=True),
-    плюс логируем то, что ответил Telegram.
-    """
-    api_id, api_hash = _tg_api_creds()
-    if not api_id or not api_hash:
-        raise RuntimeError("TG_API_ID / TG_API_HASH not configured")
-
-    client = TelegramClient(StringSession(), api_id, api_hash)
-    await client.connect()
-
-    try:
-        # ПРОСИМ ТЕЛЕГРАМ ОТПРАВИТЬ ИМЕННО SMS, ЕСЛИ МОЖНО
-        result = await client.send_code_request(phone, force_sms=True)
-
-        # result – это объект типов SendCode, в нём есть phone_code_hash,
-        # иногда ещё info о типе доставки.
-        phone_code_hash = result.phone_code_hash
-
-        # Чисто для дебага — увидим в логах, что именно вернул Telegram.
-        logger.info(
-            "send_code_request OK for %s: phone_code_hash=%s, result=%r",
-            phone,
-            phone_code_hash,
-            result,
-        )
-
-        return phone_code_hash
-    finally:
-        await client.disconnect()
-
-
-
-async def _tg_sign_in(phone: str, code: str, phone_code_hash: str, password: Optional[str]):
-    api_id, api_hash = _tg_api_creds()
-    if not api_id or not api_hash:
-        raise RuntimeError("TG_API_ID / TG_API_HASH not configured")
-
-    session = StringSession()
-    client = TelegramClient(session, api_id, api_hash)
-    await client.connect()
-
-    try:
-        await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
-    except SessionPasswordNeededError:
-        if not password:
-            raise
-        await client.sign_in(password=password)
-
-    session_str = session.save()
-    await client.disconnect()
-    return session_str
-
-
 async def _tg_check_session_active():
-    """
-    Проверка, активна ли текущая StringSession из БД.
-    """
     api_id, api_hash = _tg_api_creds()
     if not api_id or not api_hash:
         return {"ok": False, "reason": "no_api_creds", "me": None}
@@ -848,80 +773,8 @@ async def _tg_check_session_active():
     return result
 
 
-@app.route("/api/admin/tg_auth/start", methods=["POST"])
-def api_admin_tg_auth_start():
-    """
-    UI шаг 1: отправить код на телефон.
-    Тело: {"phone": "+79990000000"}
-    """
-    admin, err = _require_admin()
-    if err:
-        return err
-
-    data = request.get_json(silent=True) or {}
-    phone = (data.get("phone") or "").strip()
-    if not phone:
-        return jsonify({"error": "phone_required"}), 400
-
-    try:
-        phone_code_hash = asyncio.run(_tg_send_code(phone))
-    except Exception as e:
-        logger.error("tg_auth_start: %s", e)
-        return jsonify({"error": str(e)}), 500
-
-    pending = {
-        "phone": phone,
-        "phone_code_hash": phone_code_hash,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
-    set_status("tg_auth_pending", json.dumps(pending, ensure_ascii=False))
-    return jsonify({"status": "ok"})
-
-
-@app.route("/api/admin/tg_auth/confirm", methods=["POST"])
-def api_admin_tg_auth_confirm():
-    """
-    UI шаг 2: подтвердить код (и пароль 2FA).
-    Тело: {"code": "...", "password": "optional"}
-    """
-    admin, err = _require_admin()
-    if err:
-        return err
-
-    data = request.get_json(silent=True) or {}
-    code = (data.get("code") or "").strip()
-    password = (data.get("password") or "").strip() or None
-
-    if not code:
-        return jsonify({"error": "code_required"}), 400
-
-    pending = get_status("tg_auth_pending")
-    if not pending or not pending.get("value"):
-        return jsonify({"error": "no_pending_session"}), 400
-
-    try:
-        pending_val = json.loads(pending["value"])
-        phone = pending_val["phone"]
-        phone_code_hash = pending_val["phone_code_hash"]
-    except Exception:
-        return jsonify({"error": "pending_data_invalid"}), 500
-
-    try:
-        session_str = asyncio.run(_tg_sign_in(phone, code, phone_code_hash, password))
-    except Exception as e:
-        logger.error("tg_auth_confirm: %s", e)
-        return jsonify({"error": str(e)}), 500
-
-    set_secret("tg_session", session_str)
-    set_status("tg_auth_pending", "")
-    return jsonify({"status": "ok"})
-
-
 @app.route("/api/admin/tg_session/check", methods=["GET"])
 def api_admin_tg_session_check():
-    """
-    UI: проверить, что tg_session в БД ещё рабочая.
-    """
     admin, err = _require_admin()
     if err:
         return err
@@ -935,7 +788,105 @@ def api_admin_tg_session_check():
     return jsonify(result)
 
 
-# ---------------- Cron helpers (Railway Scheduled Jobs) ----------------
+# ---- Telegram auth через внешний tg_auth_service ----
+
+@app.route("/api/admin/tg_auth/start", methods=["POST"])
+def api_admin_tg_auth_start():
+    """
+    Шаг 1: запросить отправку кода через внешний tg_auth_service.
+    Тело: {"phone": "+7999..."}
+    """
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    if not TG_AUTH_SERVICE_URL or not TG_AUTH_SERVICE_TOKEN:
+        return jsonify({"error": "auth_service_not_configured"}), 500
+
+    data = request.get_json(silent=True) or {}
+    phone = (data.get("phone") or "").strip()
+    if not phone:
+        return jsonify({"error": "phone_required"}), 400
+
+    try:
+        resp = httpx.post(
+            TG_AUTH_SERVICE_URL + "/auth/start",
+            json={"phone": phone},
+            headers={"X-AUTH-TOKEN": TG_AUTH_SERVICE_TOKEN},
+            timeout=15.0,
+        )
+    except Exception as e:
+        logger.error("tg_auth_start: http error: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+    try:
+        j = resp.json()
+    except Exception:
+        j = None
+
+    if resp.status_code != 200:
+        msg = (j and j.get("error")) or ("HTTP " + str(resp.status_code))
+        logger.error("tg_auth_start: service error: %s", msg)
+        return jsonify({"error": msg}), 500
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/admin/tg_auth/confirm", methods=["POST"])
+def api_admin_tg_auth_confirm():
+    """
+    Шаг 2: подтвердить код через внешний tg_auth_service и сохранить StringSession.
+    Тело: {"phone": "+7999...", "code": "...", "password": "optional"}
+    """
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    if not TG_AUTH_SERVICE_URL or not TG_AUTH_SERVICE_TOKEN:
+        return jsonify({"error": "auth_service_not_configured"}), 500
+
+    data = request.get_json(silent=True) or {}
+    phone = (data.get("phone") or "").strip()
+    code = (data.get("code") or "").strip()
+    password = (data.get("password") or "").strip() or None
+
+    if not phone:
+        return jsonify({"error": "phone_required"}), 400
+    if not code:
+        return jsonify({"error": "code_required"}), 400
+
+    try:
+        resp = httpx.post(
+            TG_AUTH_SERVICE_URL + "/auth/confirm",
+            json={"phone": phone, "code": code, "password": password},
+            headers={"X-AUTH-TOKEN": TG_AUTH_SERVICE_TOKEN},
+            timeout=30.0,
+        )
+    except Exception as e:
+        logger.error("tg_auth_confirm: http error: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+    try:
+        j = resp.json()
+    except Exception:
+        j = None
+
+    if resp.status_code != 200 or not j or j.get("status") != "ok":
+        msg = (j and (j.get("error") or j.get("message"))) or ("HTTP " + str(resp.status_code))
+        logger.error("tg_auth_confirm: service error: %s", msg)
+        return jsonify({"error": msg}), 500
+
+    session_str = j.get("session")
+    if not session_str:
+        return jsonify({"error": "no_session_returned"}), 500
+
+    set_secret("tg_session", session_str)
+    set_status("tg_auth_pending", "")
+
+    return jsonify({"status": "ok"})
+
+
+# ---- Cron / напоминания ----
 
 CRON_SECRET = os.getenv("CRON_SECRET", "")
 
@@ -1023,7 +974,7 @@ def cron_parsers_watchdog():
     return jsonify({"status": "ok", "alerts": alerts})
 
 
-# ---------------- Main ----------------
+# ---- main ----
 
 if __name__ == "__main__":
     logger.info("Инициализация БД...")
