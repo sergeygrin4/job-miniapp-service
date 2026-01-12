@@ -164,16 +164,29 @@ def _iso(dt):
 
 def send_alert_human(text: str):
     """
-    Послать алерт в ADMIN_CHAT_ID через бота.
+    Простая синхронная отправка алерта в ADMIN_CHAT_ID.
+    Обходим python-telegram-bot и сразу ходим в HTTP API Telegram.
     """
-    if not bot or not ADMIN_CHAT_ID:
+    if not BOT_TOKEN or not ADMIN_CHAT_ID:
         logger.warning("No bot/admin chat configured, alert skipped: %s", text)
         return
 
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
-        asyncio.run(bot.send_message(chat_id=ADMIN_CHAT_ID, text=text))
+        resp = httpx.post(
+            url,
+            json={"chat_id": ADMIN_CHAT_ID, "text": text},
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            logger.error(
+                "Failed to send alert: HTTP %s, body=%s",
+                resp.status_code,
+                resp.text[:500],
+            )
     except Exception as e:
         logger.error("Failed to send alert: %s", e)
+
 
 
 @app.route("/api/alert", methods=["POST"])
