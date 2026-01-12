@@ -743,6 +743,11 @@ def _tg_api_creds():
 
 
 async def _tg_send_code(phone: str):
+    """
+    Отправка кода на указанный телефон.
+    Пробуем запросить именно SMS (force_sms=True),
+    плюс логируем то, что ответил Telegram.
+    """
     api_id, api_hash = _tg_api_creds()
     if not api_id or not api_hash:
         raise RuntimeError("TG_API_ID / TG_API_HASH not configured")
@@ -750,12 +755,26 @@ async def _tg_send_code(phone: str):
     client = TelegramClient(StringSession(), api_id, api_hash)
     await client.connect()
 
-    # по умолчанию: код может прийти в приложение или SMS
-    result = await client.send_code_request(phone)
-    phone_code_hash = result.phone_code_hash
+    try:
+        # ПРОСИМ ТЕЛЕГРАМ ОТПРАВИТЬ ИМЕННО SMS, ЕСЛИ МОЖНО
+        result = await client.send_code_request(phone, force_sms=True)
 
-    await client.disconnect()
-    return phone_code_hash
+        # result – это объект типов SendCode, в нём есть phone_code_hash,
+        # иногда ещё info о типе доставки.
+        phone_code_hash = result.phone_code_hash
+
+        # Чисто для дебага — увидим в логах, что именно вернул Telegram.
+        logger.info(
+            "send_code_request OK for %s: phone_code_hash=%s, result=%r",
+            phone,
+            phone_code_hash,
+            result,
+        )
+
+        return phone_code_hash
+    finally:
+        await client.disconnect()
+
 
 
 async def _tg_sign_in(phone: str, code: str, phone_code_hash: str, password: Optional[str]):
