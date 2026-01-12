@@ -206,87 +206,89 @@ def check_access():
 
 
 
-@app.route("/api/allowed_users", methods=["GET", "POST", "DELETE"])
-def api_allowed_users():
-    """
-    Управление списком доступа. Только для админов (ADMINS).
-    """
-    admin_username = request.headers.get("X-ADMIN-USERNAME")
-    if not is_admin(admin_username):
-        return jsonify({"error": "admin_forbidden"}), 403
+@app.route("/api/allowed_users", methods=["GET"])
+def list_allowed_users():
+    admin, err = _require_admin()
+    if err:
+        return err
 
-    data = get_json()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, username, user_id, updated_at "
+        "FROM allowed_users ORDER BY id DESC"
+    )
+    rows = cur.fetchall()
+    conn.close()
 
-    if request.method == "GET":
-        with get_conn() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id, username, user_id, created_at
-                FROM allowed_users
-                ORDER BY created_at ASC
-                """
-            )
-            rows = cur.fetchall()
-
-        items = []
-        for r in rows:
-            items.append(
-                {
-                    "id": r[0],
-                    "username": r[1],
-                    "user_id": r[2],
-                    "created_at": _iso(r[3]),
-                }
-            )
-        return jsonify({"items": items})
-
-    if request.method == "POST":
-        username = _username_norm(data.get("username"))
-        user_id = data.get("user_id")
-        if not username:
-            return jsonify({"error": "username_required"}), 400
-
-        with get_conn() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                INSERT INTO allowed_users (username, user_id)
-                VALUES (%s, %s)
-                ON CONFLICT (username) DO NOTHING
-                RETURNING id, username, user_id, created_at
-                """,
-                (username, user_id),
-            )
-            row = cur.fetchone()
-            conn.commit()
-
-        if not row:
-            return jsonify({"status": "exists"})
-
-        return jsonify(
+    users = []
+    for r in rows:
+        users.append(
             {
-                "status": "ok",
-                "item": {
-                    "id": row[0],
-                    "username": row[1],
-                    "user_id": row[2],
-                    "created_at": _iso(row[3]),
-                },
+                "id": r["id"],
+                "username": r["username"],
+                "user_id": r.get("user_id"),
+                "updated_at": _iso(r.get("updated_at")),
             }
         )
 
-    # DELETE
-    user_id = data.get("id")
-    if not user_id:
-        return jsonify({"error": "id_required"}), 400
+    return jsonify({"users": users})
 
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM allowed_users WHERE id = %s", (user_id,))
-        conn.commit()
+
+@app.route("/api/allowed_users", methods=["POST"])
+def add_allowed_user():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    username_norm = _username_norm(username)
+
+    if not username_norm:
+        return jsonify({"error": "username_required"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    # уже есть такой юзер?
+    cur.execute(
+        "SELECT id FROM allowed_users WHERE username = %s",
+        (username_norm,),
+    )
+    row = cur.fetchone()
+    if row:
+        # просто обновляем updated_at
+        cur.execute(
+            "UPDATE allowed_users SET updated_at = NOW() WHERE id = %s",
+            (row["id"],),
+        )
+    else:
+        # создаём нового
+        cur.execute(
+            "INSERT INTO allowed_users (username, user_id, updated_at) "
+            "VALUES (%s, %s, NOW())",
+            (username_norm, None),
+        )
+    conn.commit()
+    conn.close()
 
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/allowed_users/<int:allowed_id>", methods=["DELETE"])
+def delete_allowed_user(allowed_id: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM allowed_users WHERE id = %s", (allowed_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
 
 
 
@@ -309,77 +311,89 @@ def _job_to_dict(row):
 
 
 @app.route("/api/jobs", methods=["GET"])
-def get_jobs():
-    limit = int(request.args.get("limit") or "50")
-    archived = request.args.get("archived")
-    if archived is None:
-        archived = False
-    else:
-        archived = archived.lower() == "true"
+def api_get_jobs():
+    try:
+        limit = int(request.args.get("limit") or "50")
+    except Exception:
+        limit = 50
+    limit = max(1, min(limit, 200))
 
-    search = (request.args.get("q") or "").strip()
-    source_filter = (request.args.get("source") or "").strip()
+    archived_str = request.args.get("archived") or "false"
+    archived = archived_str.lower() == "true"
 
-    with get_conn() as conn:
-        cur = conn.cursor()
-        params = [archived]
-        where = ["archived = %s"]
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, source, source_name, external_id, url, text, sender_username,
+               created_at, received_at, archived, archived_at
+        FROM jobs
+        WHERE archived = %s
+        ORDER BY id DESC
+        LIMIT %s
+        """,
+        (archived, limit),
+    )
+    rows = cur.fetchall()
+    conn.close()
 
-        if search:
-            where.append("text ILIKE %s")
-            params.append(f"%{search}%")
-
-        if source_filter:
-            where.append("source = %s")
-            params.append(source_filter)
-
-        where_sql = " AND ".join(where)
-        cur.execute(
-            f"""
-            SELECT id, source, source_name, external_id, url, text, sender_username,
-                   created_at, received_at, archived
-            FROM jobs
-            WHERE {where_sql}
-            ORDER BY created_at DESC
-            LIMIT %s
-            """,
-            params + [limit],
+    jobs = []
+    for r in rows:
+        jobs.append(
+            {
+                "id": r["id"],
+                "source": r["source"],
+                "source_name": r["source_name"],
+                "external_id": r["external_id"],
+                "url": r["url"],
+                "text": r["text"],
+                "sender_username": r.get("sender_username"),
+                "created_at": _iso(r.get("created_at")),
+                "received_at": _iso(r.get("received_at")),
+                "archived": bool(r.get("archived")),
+                "archived_at": _iso(r.get("archived_at")),
+            }
         )
-        rows = cur.fetchall()
-
-    jobs = [
-        {
-            "id": r[0],
-            "source": r[1],
-            "source_name": r[2],
-            "external_id": r[3],
-            "url": r[4],
-            "text": r[5],
-            "sender_username": r[6],
-            "created_at": _iso(r[7]),
-            "received_at": _iso(r[8]),
-            "archived": bool(r[9]),
-        }
-        for r in rows
-    ]
 
     return jsonify({"jobs": jobs})
 
 
 @app.route("/api/jobs/<int:job_id>/archive", methods=["POST"])
-def archive_job(job_id: int):
-    with get_conn() as conn:
-        cur = conn.cursor()
+def api_archive_job(job_id: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    archived = bool(data.get("archived", True))
+
+    conn = get_conn()
+    cur = conn.cursor()
+    if archived:
         cur.execute(
             """
             UPDATE jobs
-            SET archived = TRUE
-            WHERE id = %s
+               SET archived = TRUE,
+                   archived_at = NOW()
+             WHERE id = %s
             """,
             (job_id,),
         )
-        conn.commit()
+    else:
+        cur.execute(
+            """
+            UPDATE jobs
+               SET archived = FALSE,
+                   archived_at = NULL
+             WHERE id = %s
+            """,
+            (job_id,),
+        )
+    conn.commit()
+    conn.close()
+
     return jsonify({"status": "ok"})
+
 
 
 @app.route("/post", methods=["POST"])
