@@ -1020,114 +1020,117 @@ async function saveFbCookiesJson() {
 }
 
 
-  // --- FB cookies: динамичные значения ---
-  async function saveFbCookiesDynamic() {
-    try {
-      const dynamicMap = {};
+// --- FB cookies: динамичные значения ---
+async function saveFbCookiesDynamic() {
+  try {
+    const dynamicMap = {};
 
-      function addKey(key, rawVal) {
-        if (!rawVal) return;
-        let v = rawVal.trim();
-        if (!v) return;
-        // разрешаем вводить и "xs=..." и просто "..."
-        const eqIdx = v.indexOf("=");
-        if (eqIdx > 0) {
-          v = v.slice(eqIdx + 1).trim();
-        }
-        if (!v) return;
-        dynamicMap[key] = v;
+    function addKey(key, rawVal) {
+      if (!rawVal) return;
+      let v = rawVal.trim();
+      if (!v) return;
+      // разрешаем вводить и "xs=..." и просто "..."
+      const eqIdx = v.indexOf("=");
+      if (eqIdx > 0) {
+        v = v.slice(eqIdx + 1).trim();
       }
-
-      addKey("xs", $("fb-xs").value);
-      addKey("sb", $("fb-sb").value);
-      addKey("fr", $("fb-fr").value);
-      addKey("c_user", $("fb-c_user").value);
-      addKey("datr", $("fb-datr").value);
-      addKey("spin", $("fb-spin").value);
-
-      const extra = $("fb-extra-kv").value.trim();
-      if (extra) {
-        extra.split(";").forEach((chunk) => {
-          const p = chunk.trim();
-          if (!p) return;
-          const eqIdx = p.indexOf("=");
-          if (eqIdx <= 0) return;
-          const k = p.slice(0, eqIdx).trim();
-          const v = p.slice(eqIdx + 1).trim();
-          if (!k || !v) return;
-          dynamicMap[k] = v;
-        });
-      }
-
-      const dynKeys = Object.keys(dynamicMap);
-      if (!dynKeys.length) {
-        showFlash("Заполни xs/sb/fr/c_user или extra в формате key=value", true);
-        return;
-      }
-
-      // тянем сохранённый полный JSON
-      const secretRes = await fetch("/api/parser_secrets/fb_cookies_json");
-      if (!secretRes.ok) {
-        showFlash("Не удалось получить сохранённые cookies (fb_cookies_json)", true);
-        console.error("fb_cookies_json status", secretRes.status, await secretRes.text());
-        return;
-      }
-      const secretData = await secretRes.json();
-      let storedJson = secretData.value;
-      if (!storedJson) {
-        showFlash('Сначала вставь ПОЛНЫЙ JSON cookies из Apify и нажми "Сохранить полный JSON".', true);
-        return;
-      }
-
-      let cookies;
-      try {
-        cookies = JSON.parse(storedJson);
-      } catch (e) {
-        console.error("fb_cookies_json parse error", e, storedJson);
-        showFlash("Сохранённый JSON cookies повреждён. Вставь корректный полный JSON из Apify и сохрани его ещё раз.", true);
-        return;
-      }
-
-      if (!Array.isArray(cookies)) {
-        console.error("fb_cookies_json is not array", cookies);
-        showFlash('Ожидался массив cookies в JSON (формат: [{"key":"c_user","value":"..."}, ...]).', true);
-        return;
-      }
-
-      let matched = 0;
-      const cookieKeys = [];
-      for (const c of cookies) {
-        const key = (c.key || c.name || "").trim();
-        if (!key) continue;
-        cookieKeys.push(key);
-        if (Object.prototype.hasOwnProperty.call(dynamicMap, key)) {
-          c.value = dynamicMap[key];
-          matched++;
-        }
-      }
-
-      if (!matched) {
-        console.warn("FB dynamic cookies: no keys matched", { dynKeys, cookieKeys });
-        showFlash(
-          "Не удалось сопоставить ни один cookie.\n" +
-          "Проверь, что в полном JSON есть те же ключи (xs, sb, fr, c_user и т.п.).",
-          true
-        );
-        return;
-      }
-
-            const newJson = JSON.stringify(cookies);
-
-      await apiFetch("/api/admin/fb_cookies", {
-        method: "POST",
-        admin: true,
-        body: { cookies_json: newJson }, // <- тоже cookies_json
-      });
-
-      showFlash(`Динамичные cookies обновлены (обновлено полей: ${matched}).`);
-
+      if (!v) return;
+      dynamicMap[key] = v;
     }
+
+    addKey("xs", $("fb-xs").value);
+    addKey("sb", $("fb-sb").value);
+    addKey("fr", $("fb-fr").value);
+    addKey("c_user", $("fb-c_user").value);
+    addKey("datr", $("fb-datr").value);
+    addKey("spin", $("fb-spin").value);
+
+    const extra = $("fb-extra-kv").value.trim();
+    if (extra) {
+      extra.split(";").forEach((chunk) => {
+        const p = chunk.trim();
+        if (!p) return;
+        const eqIdx = p.indexOf("=");
+        if (eqIdx <= 0) return;
+        const k = p.slice(0, eqIdx).trim();
+        const v = p.slice(eqIdx + 1).trim();
+        if (!k || !v) return;
+        dynamicMap[k] = v;
+      });
+    }
+
+    const dynKeys = Object.keys(dynamicMap);
+    if (!dynKeys.length) {
+      showFlash("Заполни xs/sb/fr/c_user или extra в формате key=value", true);
+      return;
+    }
+
+    // тянем сохранённый полный JSON
+    const secretRes = await fetch("/api/parser_secrets/fb_cookies_json");
+    if (!secretRes.ok) {
+      showFlash("Не удалось получить сохранённые cookies (fb_cookies_json)", true);
+      console.error("fb_cookies_json status", secretRes.status, await secretRes.text());
+      return;
+    }
+    const secretData = await secretRes.json();
+    let storedJson = secretData.value;
+    if (!storedJson) {
+      showFlash('Сначала вставь ПОЛНЫЙ JSON cookies из Apify и нажми "Сохранить полный JSON".', true);
+      return;
+    }
+
+    let cookies;
+    try {
+      cookies = JSON.parse(storedJson);
+    } catch (e) {
+      console.error("fb_cookies_json parse error", e, storedJson);
+      showFlash("Сохранённый JSON cookies повреждён. Вставь корректный полный JSON из Apify и сохрани его ещё раз.", true);
+      return;
+    }
+
+    if (!Array.isArray(cookies)) {
+      console.error("fb_cookies_json is not array", cookies);
+      showFlash('Ожидался массив cookies в JSON (формат: [{"key":"c_user","value":"..."}, ...]).', true);
+      return;
+    }
+
+    let matched = 0;
+    const cookieKeys = [];
+    for (const c of cookies) {
+      const key = (c.key || c.name || "").trim();
+      if (!key) continue;
+      cookieKeys.push(key);
+      if (Object.prototype.hasOwnProperty.call(dynamicMap, key)) {
+        c.value = dynamicMap[key];
+        matched++;
+      }
+    }
+
+    if (!matched) {
+      console.warn("FB dynamic cookies: no keys matched", { dynKeys, cookieKeys });
+      showFlash(
+        "Не удалось сопоставить ни один cookie.\n" +
+        "Проверь, что в полном JSON есть те же ключи (xs, sb, fr, c_user и т.п.).",
+        true
+      );
+      return;
+    }
+
+    const newJson = JSON.stringify(cookies);
+
+    await apiFetch("/api/admin/fb_cookies", {
+      method: "POST",
+      admin: true,
+      body: { cookies_json: newJson }, // если бэк ждёт cookies_json
+    });
+
+    showFlash(`Динамичные cookies обновлены (обновлено полей: ${matched}).`);
+  } catch (e) {
+    console.error(e);
+    showFlash("Ошибка сохранения динамичных cookies: " + e.message, true);
   }
+}
+
 
   async function loadAllowedUsers() {
     try {
