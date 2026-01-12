@@ -48,6 +48,13 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID") or ADMIN_CHAT_ID_DEFAULT
 ADMINS_RAW = os.getenv("ADMINS", "")
 
 API_SECRET = os.getenv("API_SECRET", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+# ==== rate-limit для алертов (по умолчанию 1 раз в час) ====
+ALERT_RATE_LIMIT_SECONDS = int(os.getenv("ALERT_RATE_LIMIT_SECONDS") or "3600")
+_last_alert_sent_at = {}
+# ==========================================================
+
 TELEGRAM_BOT_TOKEN = BOT_TOKEN
 
 # Внешний сервис для авторизации в Telegram
@@ -165,14 +172,45 @@ def _iso(dt):
 
 # ---- Алерты в телеграм ----
 
+# ---------------- Alerts ----------------
+
 def send_alert_human(text: str):
     """
-    Простая синхронная отправка алерта в ADMIN_CHAT_ID.
-    Используем прямой HTTP-запрос к Telegram Bot API.
+    Отправка уведомления админу в Telegram.
+
+    Rate-limit: одно и то же сообщение (по точному тексту) не чаще,
+    чем раз в ALERT_RATE_LIMIT_SECONDS (по умолчанию 3600 сек == 1 час).
     """
     if not BOT_TOKEN or not ADMIN_CHAT_ID:
         logger.warning("No bot/admin chat configured, alert skipped: %s", text)
         return
+
+    now = datetime.now(timezone.utc)
+    key = (text or "").strip()
+
+    last = _last_alert_sent_at.get(key)
+    if last is not None and now - last < timedelta(seconds=ALERT_RATE_LIMIT_SECONDS):
+        # Уже слали такое же сообщение недавно — пропускаем
+        logger.info(
+            "Alert skipped due to rate limit (%.0f seconds since last): %r",
+            (now - last).total_seconds(),
+            key,
+        )
+        return
+
+    _last_alert_sent_at[key] = now
+
+    try:
+        # через requests напрямую в Telegram API
+        resp = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": ADMIN_CHAT_ID, "text": text},
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        logger.error("Failed to send alert: %s", e)
+
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
