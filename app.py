@@ -136,61 +136,73 @@ def get_json():
 @app.route("/check_access", methods=["POST"])
 def check_access():
     """
-    Проверка доступа в миниапп.
-
-    username берём:
-      1) из JSON (data.username), если есть
-      2) иначе из заголовка X-ADMIN-USERNAME (как было раньше).
-
-    Доступ есть, если:
-      - username в ADMINS, ИЛИ
-      - username есть в таблице allowed_users.
-    Админа автоматически добавляем в allowed_users при первом заходе.
+    Миниапп присылает { user_id, username }.
+    Разрешаем:
+      - если username в ADMINS
+      - или если username есть в allowed_users (таблица)
     """
-    data = get_json()
+    data = request.get_json(silent=True) or {}
+    header_username = request.headers.get("X-ADMIN-USERNAME")
 
-    username = data.get("username") or request.headers.get("X-ADMIN-USERNAME")
-    user_id = data.get("user_id") or data.get("id")
+    user_id = data.get("user_id")
+    username = data.get("username") or header_username
 
-    logger.info("check_access: username=%r user_id=%r", username, user_id)
-
-    u_norm = _username_norm(username)
-    is_admin_flag = is_admin(username)
-    allowed = False
-
-    with get_conn() as conn:
-        cur = conn.cursor()
-
-        if u_norm:
-            # проверяем, есть ли в allowed_users
-            cur.execute(
-                "SELECT 1 FROM allowed_users WHERE username = %s LIMIT 1",
-                (u_norm,),
-            )
-            if cur.fetchone():
-                allowed = True
-
-        # если админ и ещё не в таблице — добавим
-        if is_admin_flag and not allowed and u_norm:
-            cur.execute(
-                """
-                INSERT INTO allowed_users (username, user_id)
-                VALUES (%s, %s)
-                ON CONFLICT (username) DO NOTHING
-                """,
-                (u_norm, user_id),
-            )
-            conn.commit()
-            allowed = True
-
-    return jsonify(
-        {
-            "allowed": bool(allowed or is_admin_flag),
-            "is_admin": bool(is_admin_flag),
-            "username": username,
-            "user_id": user_id,
-        }
+    logger.info(
+        "check_access: data=%r header_username=%r -> username=%r",
+        data,
+        header_username,
+        username,
     )
+
+    username_norm = _username_norm(username)
+
+    # Админов пускаем сразу
+    if is_admin(username_norm):
+        logger.info("check_access: %s is admin -> access granted", username_norm)
+        return jsonify({"access_granted": True, "is_admin": True})
+
+    if not username_norm:
+        logger.info("check_access: username missing -> access denied")
+        return jsonify({"access_granted": False, "is_admin": False})
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, username, user_id FROM allowed_users WHERE username = %s",
+        (username_norm,),
+    )
+    row = cur.fetchone()
+
+    if row:
+        # аккуратно обновляем user_id, если его ещё нет
+        db_user_id = row.get("user_id")
+        try:
+            db_user_id = int(db_user_id) if db_user_id is not None else None
+        except Exception:
+            db_user_id = None
+
+        if not db_user_id and user_id:
+            try:
+                user_id_int = int(user_id)
+            except Exception:
+                user_id_int = None
+
+            if user_id_int:
+                cur.execute(
+                    "UPDATE allowed_users SET user_id = %s, updated_at = NOW() WHERE id = %s",
+                    (user_id_int, row["id"]),
+                )
+                conn.commit()
+
+        conn.close()
+        logger.info(
+            "check_access: %s found in allowed_users -> access granted", username_norm
+        )
+        return jsonify({"access_granted": True, "is_admin": False})
+
+    conn.close()
+    logger.info("check_access: %s not found -> access denied", username_norm)
+    return jsonify({"access_granted": False, "is_admin": False})
 
 
 
@@ -965,97 +977,104 @@ def cron_parsers_watchdog():
     return jsonify({"status": "ok", "alerts": alerts})
 
 
-# ---- Groups (FB + TG источники) ----
+# ---- Groups API ----
 
 @app.route("/api/groups", methods=["GET"])
-def get_groups():
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, group_id, group_name, enabled, added_at
-            FROM fb_groups
-            ORDER BY id DESC
-            """
-        )
-        rows = cur.fetchall()
+def api_get_groups():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, group_id, group_name, enabled, added_at "
+        "FROM fb_groups ORDER BY id DESC"
+    )
+    rows = cur.fetchall()
+    conn.close()
 
     groups = []
     for r in rows:
         groups.append(
             {
-                "id": r[0],
-                "group_id": r[1],
-                "group_name": r[2],
-                "enabled": bool(r[3]),
-                "added_at": _iso(r[4]),
+                "id": r["id"],
+                "group_id": r["group_id"],
+                "group_name": r.get("group_name"),
+                "enabled": r.get("enabled", True),
+                "added_at": _iso(r.get("added_at")),
             }
         )
     return jsonify({"groups": groups})
 
 
+@app.route("/api/fb_groups", methods=["GET"])
+def api_get_fb_groups():
+    # Старый эндпоинт, просто прокидываем тот же список
+    return api_get_groups()
+
+
 @app.route("/api/groups", methods=["POST"])
-def add_group():
+def api_add_group():
     admin, err = _require_admin()
     if err:
         return err
 
-    data = get_json()
+    data = request.get_json(silent=True) or {}
     group_id = (data.get("group_id") or "").strip()
     group_name = (data.get("group_name") or "").strip()
 
     if not group_id:
         return jsonify({"error": "group_id_required"}), 400
 
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO fb_groups (group_id, group_name, enabled)
-            VALUES (%s, %s, TRUE)
-            ON CONFLICT (group_id) DO UPDATE
-            SET group_name = EXCLUDED.group_name,
-                enabled   = TRUE
-            RETURNING id
-            """,
-            (group_id, group_name),
-        )
-        row = cur.fetchone()
-        conn.commit()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO fb_groups (group_id, group_name)
+        VALUES (%s, %s)
+        ON CONFLICT (group_id) DO UPDATE
+        SET group_name = EXCLUDED.group_name,
+            enabled = TRUE
+        RETURNING id
+        """,
+        (group_id, group_name or None),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
 
-    return jsonify({"status": "ok", "id": row[0] if row else None})
+    return jsonify({"status": "ok", "id": row["id"]})
 
 
-@app.route("/api/groups/<int:gid>", methods=["DELETE"])
-def delete_group(gid: int):
+@app.route("/api/groups/<int:group_id>/toggle", methods=["POST"])
+def api_toggle_group(group_id: int):
     admin, err = _require_admin()
     if err:
         return err
 
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM fb_groups WHERE id = %s", (gid,))
-        conn.commit()
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled", True))
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE fb_groups SET enabled = %s WHERE id = %s",
+        (enabled, group_id),
+    )
+    conn.commit()
+    conn.close()
 
     return jsonify({"status": "ok"})
 
 
-@app.route("/api/groups/<int:gid>/toggle", methods=["POST"])
-def toggle_group(gid: int):
+@app.route("/api/groups/<int:group_id>", methods=["DELETE"])
+def api_delete_group(group_id: int):
     admin, err = _require_admin()
     if err:
         return err
 
-    data = get_json()
-    enabled = bool(data.get("enabled", True))
-
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE fb_groups SET enabled = %s WHERE id = %s",
-            (enabled, gid),
-        )
-        conn.commit()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM fb_groups WHERE id = %s", (group_id,))
+    conn.commit()
+    conn.close()
 
     return jsonify({"status": "ok"})
 
