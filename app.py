@@ -82,6 +82,153 @@ def _require_parser_key():
             return False, (jsonify({"error": "forbidden"}), 403)
     return True, None
 
+# ---- Уведомления в Telegram о новых постах ----
+
+NOTIFY_CHAT_IDS_RAW = os.getenv("NOTIFY_CHAT_IDS", "").strip()
+NOTIFY_PER_CHAT_PER_MINUTE = int(os.getenv("NOTIFY_PER_CHAT_PER_MINUTE") or "20")
+
+_notify_window: dict[int, dict[str, object]] = {}  # chat_id -> {"reset_at": datetime, "count": int}
+
+
+def _parse_notify_chat_ids() -> list[int]:
+    ids: list[int] = []
+    if NOTIFY_CHAT_IDS_RAW:
+        for part in NOTIFY_CHAT_IDS_RAW.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                ids.append(int(part))
+            except Exception:
+                logger.warning("Bad NOTIFY_CHAT_IDS entry ignored: %r", part)
+    return ids
+
+
+def _can_send_notify(chat_id: int) -> bool:
+    now = datetime.now(timezone.utc)
+    rec = _notify_window.get(chat_id)
+    if not rec or not isinstance(rec.get("reset_at"), datetime):
+        _notify_window[chat_id] = {"reset_at": now + timedelta(minutes=1), "count": 1}
+        return True
+    reset_at = rec["reset_at"]
+    if now >= reset_at:
+        _notify_window[chat_id] = {"reset_at": now + timedelta(minutes=1), "count": 1}
+        return True
+    cnt = int(rec.get("count") or 0)
+    if cnt >= NOTIFY_PER_CHAT_PER_MINUTE:
+        return False
+    rec["count"] = cnt + 1
+    return True
+
+
+def _build_job_message(data: dict) -> tuple[str, dict | None]:
+    source_name = (data.get("source_name") or data.get("source") or "").strip()
+    url = (data.get("url") or "").strip()
+    text = (data.get("text") or "").strip()
+
+    preview = text.strip()
+    if len(preview) > 700:
+        preview = preview[:700].rstrip() + "…"
+
+    msg_lines = []
+    if url:
+        msg_lines.append("📣 Получена вакансия из группы:")
+        msg_lines.append(url)
+    else:
+        msg_lines.append("📣 Получена вакансия:")
+
+    msg_lines.append("")
+    msg_lines.append("📝 Краткое описание:")
+    msg_lines.append(preview if preview else "(без текста)")
+
+    message_text = "\n".join(msg_lines)
+
+    buttons = []
+    if url:
+        buttons.append([{"text": "🔗 Открыть пост", "url": url}])
+
+    sender_username = (data.get("sender_username") or "").strip()
+    if sender_username:
+        if sender_username.startswith("http://") or sender_username.startswith("https://"):
+            dm_url = sender_username
+        else:
+            uname = sender_username.lstrip("@")
+            dm_url = f"https://t.me/{uname}" if uname else ""
+        if dm_url:
+            buttons.append([{"text": "✉️ Написать автору", "url": dm_url}])
+
+    reply_markup = {"inline_keyboard": buttons} if buttons else None
+    return message_text, reply_markup
+
+
+def send_job_notification(data: dict):
+    """
+    Шлём уведомление в Telegram-бота о новом посте.
+    Кому шлём:
+      - если задан NOTIFY_CHAT_IDS -> строго туда
+      - иначе -> всем allowed_users.user_id (кто заходил в миниапп) + ADMIN_CHAT_ID (если задан)
+    """
+    if not BOT_TOKEN:
+        logger.warning("TELEGRAM_BOT_TOKEN/BOT_TOKEN not set; job notification skipped")
+        return
+
+    chat_ids = _parse_notify_chat_ids()
+
+    if not chat_ids:
+        # allowed_users.user_id
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT DISTINCT user_id FROM allowed_users WHERE user_id IS NOT NULL")
+            rows = cur.fetchall() or []
+            conn.close()
+            for r in rows:
+                try:
+                    chat_ids.append(int(r.get("user_id")))
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error("Failed to load allowed_users for notifications: %s", e)
+
+        # admin chat (optional)
+        if ADMIN_CHAT_ID:
+            try:
+                chat_ids.append(int(ADMIN_CHAT_ID))
+            except Exception:
+                pass
+
+    # unique
+    chat_ids = list(dict.fromkeys(chat_ids))
+    if not chat_ids:
+        logger.info("No chat_ids to notify (allowed_users empty and NOTIFY_CHAT_IDS not set)")
+        return
+
+    message_text, reply_markup = _build_job_message(data)
+
+    for chat_id in chat_ids:
+        if not _can_send_notify(chat_id):
+            logger.warning("Notify rate-limit hit for chat_id=%s; skipped", chat_id)
+            continue
+        try:
+            payload = {
+                "chat_id": chat_id,
+                "text": message_text,
+                "disable_web_page_preview": True,
+            }
+            if reply_markup:
+                payload["reply_markup"] = reply_markup
+
+            resp = requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                json=payload,
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                logger.error("Failed to send notify to %s: HTTP %s body=%s",
+                             chat_id, resp.status_code, resp.text[:500])
+        except Exception as e:
+            logger.error("Failed to send notify to %s: %s", chat_id, e)
+
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
@@ -651,6 +798,7 @@ def delete_keyword(keyword_id: int):
 
 @app.route("/post", methods=["POST"])
 def add_job():
+    # ✅ защита: если API_SECRET задан — требуем X-API-KEY/Bearer
     ok, err = _require_parser_key()
     if not ok:
         return err
@@ -669,17 +817,14 @@ def add_job():
     if not source or not external_id or not text:
         return jsonify({"error": "bad_request"}), 400
 
+    # created_at → datetime (если прилетает timestamp или ISO-строка)
     created_at_dt = None
     if created_at:
         try:
             if isinstance(created_at, (int, float)):
-                created_at_dt = datetime.fromtimestamp(
-                    float(created_at), tz=timezone.utc
-                )
+                created_at_dt = datetime.fromtimestamp(float(created_at), tz=timezone.utc)
             elif isinstance(created_at, str):
-                created_at_dt = datetime.fromisoformat(
-                    created_at.replace("Z", "+00:00")
-                )
+                created_at_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         except Exception:
             created_at_dt = None
 
@@ -706,9 +851,8 @@ def add_job():
     conn.commit()
     conn.close()
 
-    # Важно: cursor = RealDictCursor → берём row["id"], а не row[0]
     if row:
-        # Новый пост — шлём уведомление в TG-бот (если настроено)
+        # ✅ новый пост — отправляем уведомление в ТГ
         try:
             send_job_notification(data)
         except Exception as e:
@@ -736,7 +880,6 @@ def send_alert_human(text: str):
 
     last = _last_alert_sent_at.get(key)
     if last is not None and now - last < timedelta(seconds=ALERT_RATE_LIMIT_SECONDS):
-        # Уже слали такое же сообщение недавно — пропускаем
         logger.info(
             "Alert skipped due to rate limit (%.0f seconds since last): %r",
             (now - last).total_seconds(),
@@ -755,6 +898,7 @@ def send_alert_human(text: str):
         resp.raise_for_status()
     except Exception as e:
         logger.error("Failed to send alert: %s", e)
+
 
 
 @app.route("/api/alert", methods=["POST"])
