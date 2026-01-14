@@ -243,7 +243,7 @@ def send_job_notification(data: dict):
     message_text, reply_markup = _build_job_message(data)
 
     for chat_id in chat_ids:
-        if not _can_send_notify(chat_id):
+        if not _notify_allowed(chat_id):
             logger.warning("Notify rate-limit hit for chat_id=%s; skipped", chat_id)
             continue
         try:
