@@ -1,7 +1,11 @@
 .env
 .env.*
+!.env.sample
+!.env.example
+
 *.session
 tg_session.session
+
 cookies*.json
 *cookies*
 *.pem
