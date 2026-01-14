@@ -104,20 +104,57 @@ def _parse_notify_chat_ids() -> list[int]:
     return ids
 
 
-def _can_send_notify(chat_id: int) -> bool:
+# ---- Anti-flood для уведомлений о новых постах (circuit breaker) ----
+# В нормальном режиме не мешает: все новые посты уходят сразу.
+# Если в окно времени приходит слишком много "новых" постов — выключаем уведомления на cooldown,
+# чтобы бот не улетел в бан.
+
+NOTIFY_BURST_WINDOW_SECONDS = int(os.getenv("NOTIFY_BURST_WINDOW_SECONDS") or "60")
+NOTIFY_BURST_LIMIT = int(os.getenv("NOTIFY_BURST_LIMIT") or "200")  # 200 новых постов / минуту на чат — это уже флуд
+NOTIFY_BURST_COOLDOWN_SECONDS = int(os.getenv("NOTIFY_BURST_COOLDOWN_SECONDS") or "1800")  # 30 минут
+
+_notify_state: dict[int, dict[str, object]] = {}  # chat_id -> state
+
+
+def _notify_allowed(chat_id: int) -> bool:
+    """
+    Возвращает True если можно отправлять уведомления.
+    Если пошёл флуд — отключает уведомления на cooldown и шлёт алерт админу.
+    """
     now = datetime.now(timezone.utc)
-    rec = _notify_window.get(chat_id)
-    if not rec or not isinstance(rec.get("reset_at"), datetime):
-        _notify_window[chat_id] = {"reset_at": now + timedelta(minutes=1), "count": 1}
-        return True
-    reset_at = rec["reset_at"]
-    if now >= reset_at:
-        _notify_window[chat_id] = {"reset_at": now + timedelta(minutes=1), "count": 1}
-        return True
-    cnt = int(rec.get("count") or 0)
-    if cnt >= NOTIFY_PER_CHAT_PER_MINUTE:
+    st = _notify_state.get(chat_id)
+    if not st:
+        st = {
+            "window_reset_at": now + timedelta(seconds=NOTIFY_BURST_WINDOW_SECONDS),
+            "count": 0,
+            "disabled_until": None,
+        }
+        _notify_state[chat_id] = st
+
+    disabled_until = st.get("disabled_until")
+    if isinstance(disabled_until, datetime) and now < disabled_until:
         return False
-    rec["count"] = cnt + 1
+
+    # окно
+    window_reset_at = st.get("window_reset_at")
+    if not isinstance(window_reset_at, datetime) or now >= window_reset_at:
+        st["window_reset_at"] = now + timedelta(seconds=NOTIFY_BURST_WINDOW_SECONDS)
+        st["count"] = 0
+
+    st["count"] = int(st.get("count") or 0) + 1
+
+    if int(st["count"]) > NOTIFY_BURST_LIMIT:
+        # триггерим аварийное отключение
+        st["disabled_until"] = now + timedelta(seconds=NOTIFY_BURST_COOLDOWN_SECONDS)
+        try:
+            send_alert_human(
+                f"🚨 Flood protection: слишком много новых постов. "
+                f"Отключаю уведомления для chat_id={chat_id} на {NOTIFY_BURST_COOLDOWN_SECONDS} сек."
+            )
+        except Exception:
+            pass
+        return False
+
     return True
 
 
