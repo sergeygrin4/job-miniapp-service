@@ -416,4 +416,379 @@ def api_add_allowed_user():
         INSERT INTO allowed_users (username)
         VALUES (%s)
         ON CONFLICT (username) DO NOTHING
-        RET
+        RETURNING id
+        """,
+        (username,),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "id": row.get("id") if row else None})
+
+
+@app.route("/api/allowed_users/<int:user_id>", methods=["DELETE"])
+def api_delete_allowed_user(user_id: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM allowed_users WHERE id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
+
+
+# ---- Parser secrets ----
+
+@app.route("/api/parser_secrets/<key>", methods=["GET"])
+def api_get_parser_secret(key: str):
+    """
+    Позволяет парсерам получать секретные значения из env,
+    не храня их в исходниках. Доступ: только с правильным API_SECRET.
+    """
+    ok, err = _require_parser_key()
+    if not ok:
+        return err
+
+    key = (key or "").strip()
+    if not key:
+        return jsonify({"error": "key_required"}), 400
+
+    value = os.getenv(key)
+    if value is None:
+        return jsonify({"error": "not_found"}), 404
+
+    return jsonify({"key": key, "value": value})
+
+
+# ---- Sources (группы/каналы) ----
+
+@app.route("/api/sources", methods=["GET"])
+def get_sources():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, title, link, created_at FROM sources ORDER BY created_at DESC")
+    rows = cur.fetchall() or []
+    conn.close()
+    return jsonify({"items": rows})
+
+
+@app.route("/api/sources", methods=["POST"])
+def add_source():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    link = (data.get("link") or "").strip()
+    if not title or not link:
+        return jsonify({"error": "title_and_link_required"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO sources (title, link)
+        VALUES (%s, %s)
+        ON CONFLICT (link) DO NOTHING
+        RETURNING id
+        """,
+        (title, link),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "id": row.get("id") if row else None})
+
+
+@app.route("/api/sources/<int:source_id>", methods=["DELETE"])
+def delete_source(source_id: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM sources WHERE id = %s", (source_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# ---- FB groups ----
+
+@app.route("/api/fb_groups", methods=["GET"])
+def get_fb_groups():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, title, link, created_at FROM fb_groups ORDER BY created_at DESC")
+    rows = cur.fetchall() or []
+    conn.close()
+
+    return jsonify({"items": rows})
+
+
+@app.route("/api/fb_groups", methods=["POST"])
+def add_fb_group():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    link = (data.get("link") or "").strip()
+    if not title or not link:
+        return jsonify({"error": "title_and_link_required"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO fb_groups (title, link)
+        VALUES (%s, %s)
+        ON CONFLICT (link) DO NOTHING
+        RETURNING id
+        """,
+        (title, link),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "id": row.get("id") if row else None})
+
+
+@app.route("/api/fb_groups/<int:group_id>", methods=["DELETE"])
+def delete_fb_group(group_id: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM fb_groups WHERE id = %s", (group_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# ---- Keywords ----
+
+@app.route("/api/keywords", methods=["GET"])
+def get_keywords():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, keyword, created_at FROM keywords ORDER BY created_at DESC")
+    rows = cur.fetchall() or []
+    conn.close()
+    return jsonify({"items": rows})
+
+
+@app.route("/api/keywords", methods=["POST"])
+def add_keyword():
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    keyword = (data.get("keyword") or "").strip()
+    if not keyword:
+        return jsonify({"error": "keyword_required"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO keywords (keyword)
+        VALUES (%s)
+        ON CONFLICT (keyword) DO NOTHING
+        RETURNING id
+        """,
+        (keyword,),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok", "id": row.get("id") if row else None})
+
+
+@app.route("/api/keywords/<int:keyword_id>", methods=["DELETE"])
+def delete_keyword(keyword_id: int):
+    admin, err = _require_admin()
+    if err:
+        return err
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM keywords WHERE id = %s", (keyword_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "ok"})
+
+
+# ---- Jobs (вакансии) ----
+
+@app.route("/post", methods=["POST"])
+def add_job():
+    ok, err = _require_parser_key()
+    if not ok:
+        return err
+
+    data = request.get_json(silent=True) or {}
+
+    source = (data.get("source") or "").strip()
+    source_name = (data.get("source_name") or "").strip()
+    external_id = (data.get("external_id") or "").strip()
+    url = (data.get("url") or "").strip()
+    text = (data.get("text") or "").strip()
+    sender_username = (data.get("sender_username") or "").strip()
+    created_at = data.get("created_at")
+
+    # Обязательные поля
+    if not source or not external_id or not text:
+        return jsonify({"error": "bad_request"}), 400
+
+    created_at_dt = None
+    if created_at:
+        try:
+            if isinstance(created_at, (int, float)):
+                created_at_dt = datetime.fromtimestamp(
+                    float(created_at), tz=timezone.utc
+                )
+            elif isinstance(created_at, str):
+                created_at_dt = datetime.fromisoformat(
+                    created_at.replace("Z", "+00:00")
+                )
+        except Exception:
+            created_at_dt = None
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO jobs (source, source_name, external_id, url, text, sender_username, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (external_id, source) DO NOTHING
+        RETURNING id
+        """,
+        (
+            source,
+            source_name or source,
+            external_id,
+            url,
+            text,
+            sender_username,
+            created_at_dt,
+        ),
+    )
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    # Важно: cursor = RealDictCursor → берём row["id"], а не row[0]
+    if row:
+        # Новый пост — шлём уведомление в TG-бот (если настроено)
+        try:
+            send_job_notification(data)
+        except Exception as e:
+            logger.error("send_job_notification failed: %s", e)
+
+        return jsonify({"status": "ok", "id": row["id"]})
+    return jsonify({"status": "ok", "id": None})
+
+
+# ---- Alerts ----
+
+def send_alert_human(text: str):
+    """
+    Отправка уведомления админу в Telegram.
+
+    Rate-limit: одно и то же сообщение (по точному тексту) не чаще,
+    чем раз в ALERT_RATE_LIMIT_SECONDS (по умолчанию 3600 сек == 1 час).
+    """
+    if not BOT_TOKEN or not ADMIN_CHAT_ID:
+        logger.warning("No bot/admin chat configured, alert skipped: %s", text)
+        return
+
+    now = datetime.now(timezone.utc)
+    key = (text or "").strip()
+
+    last = _last_alert_sent_at.get(key)
+    if last is not None and now - last < timedelta(seconds=ALERT_RATE_LIMIT_SECONDS):
+        # Уже слали такое же сообщение недавно — пропускаем
+        logger.info(
+            "Alert skipped due to rate limit (%.0f seconds since last): %r",
+            (now - last).total_seconds(),
+            key,
+        )
+        return
+
+    _last_alert_sent_at[key] = now
+
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": ADMIN_CHAT_ID, "text": text},
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        logger.error("Failed to send alert: %s", e)
+
+
+@app.route("/api/alert", methods=["POST"])
+def api_alert():
+    ok, err = _require_parser_key()
+    # алерты может слать и админ миниаппа без парсер-ключа
+    if not ok:
+        # если ключ вообще не передали — позволим админскому доступу
+        if _get_parser_key_from_request() is None:
+            admin, aerr = _require_admin()
+            if aerr:
+                return aerr
+        else:
+            return err
+
+    data = request.get_json(silent=True) or {}
+    text = data.get("text") or data.get("message")
+    if not text:
+        return jsonify({"error": "text_required"}), 400
+
+    send_alert_human(text)
+    return jsonify({"status": "ok"})
+
+
+# ---- main ----
+
+if __name__ == "__main__":
+    logger.info("Инициализация БД...")
+    init_db()
+    logger.info("Запуск Flask на порту %s", PORT)
+    logger.info(
+        "TG_API_ID_DEFAULT=%s, BOT_TOKEN set=%s, ADMIN_CHAT_ID=%s",
+        TG_API_ID_DEFAULT,
+        bool(BOT_TOKEN),
+        ADMIN_CHAT_ID,
+    )
+    app.run(host="0.0.0.0", port=PORT)
