@@ -436,11 +436,26 @@
   </div>
 
   <!-- Настройки -->
-  <div id="tab-settings" class="tab">
-    <div class="section">
-      <div class="section-title">Состояние аккаунтов</div>
-      <div class="section-subtitle" id="secrets-overview">Загрузка…</div>
+  <div class="section">
+  <div class="section-title">Состояние аккаунтов</div>
+  <div class="section-subtitle" id="secrets-overview">
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      <div>
+        <span class="code">TG</span>:
+        <span id="live-tg-status" class="small-text">—</span>
+      </div>
+      <div>
+        <span class="code">FB cookies</span>:
+        <span id="live-fb-status" class="small-text">—</span>
+      </div>
+      <div class="small-text" id="live-sessions-meta">—</div>
+      <div class="btn-group-row" style="margin-top:2px;">
+        <button class="btn btn-secondary btn-sm" id="btn-sessions-check-now">Проверить сейчас</button>
+      </div>
     </div>
+  </div>
+</div>
+
 
     <div class="section">
       <div class="section-title">Facebook cookies (Apify)</div>
@@ -1314,34 +1329,100 @@
     }
   }
 
-  async function loadSecretsOverview() {
-    try {
-      const res = await apiFetch("/api/admin/secrets", { admin: true });
-      const el = $("secrets-overview");
-      const fb = res.fb_cookies_updated_at
-        ? new Date(res.fb_cookies_updated_at).toLocaleString("ru-RU")
-        : "—";
-      const tg = res.tg_session_updated_at
-        ? new Date(res.tg_session_updated_at).toLocaleString("ru-RU")
-        : "—";
-      const pending = res.tg_auth_pending;
+  // ===== Live sessions status (TG + FB) =====
+let _sessionsPollTimer = null;
+let _sessionsPollIntervalMs = 10000;
+let _secretsMetaText = "";
 
-      el.innerHTML = `
-        <div>FB cookies обновлены: <strong>${fb}</strong></div>
-        <div>TG сессия обновлена: <strong>${tg}</strong></div>
-        ${
-          pending
-            ? `<div class="small-text" style="margin-top:4px;">Незавершённая авторизация: ${JSON.stringify(
-                pending
-              )}</div>`
-            : ""
-        }
-      `;
-    } catch (e) {
-      console.error(e);
-      $("secrets-overview").textContent = "Ошибка загрузки статусов.";
+function _setLiveStatus(el, ok, labelActive, labelInactive, detail) {
+  if (!el) return;
+  const d = (detail || "").toString().trim();
+  if (ok) {
+    el.textContent = labelActive + (d ? ` (${d})` : "");
+    el.style.color = "#15803d";
+  } else {
+    el.textContent = labelInactive + (d ? ` (${d})` : "");
+    el.style.color = "#b91c1c";
+  }
+}
+
+function _ensureSessionsPolling(intervalMs) {
+  const ms = Math.max(5000, Math.min(60000, Number(intervalMs) || 10000));
+  if (_sessionsPollTimer && _sessionsPollIntervalMs === ms) return;
+  if (_sessionsPollTimer) clearInterval(_sessionsPollTimer);
+  _sessionsPollIntervalMs = ms;
+  _sessionsPollTimer = setInterval(() => {
+    loadSessionsStatus(false);
+  }, _sessionsPollIntervalMs);
+}
+
+async function loadSessionsStatus(force) {
+  try {
+    const res = force
+      ? await apiFetch("/api/admin/sessions/check_now", { admin: true, method: "POST" })
+      : await apiFetch("/api/admin/sessions/status", { admin: true });
+
+    const tg = res.tg || {};
+    const fb = res.fb || {};
+
+    _setLiveStatus($("live-tg-status"), !!tg.ok, "сессия активна", "сессия неактивна", tg.detail);
+    _setLiveStatus($("live-fb-status"), !!fb.ok, "cookies валидны", "cookies невалидны", fb.detail);
+
+    const metaEl = $("live-sessions-meta");
+    if (metaEl) {
+      const serverTime = res.server_time ? new Date(res.server_time).toLocaleString("ru-RU") : "—";
+      const ttl = res.ttl_sec != null ? `${res.ttl_sec}s` : "—";
+      const left = _secretsMetaText ? (_secretsMetaText + " • ") : "";
+      metaEl.textContent = `${left}Проверка: ${serverTime} • кэш: ${ttl}`;
+      metaEl.style.color = "#6b7280";
+    }
+
+    // Подстраиваемся под серверный TTL, чтобы не долбить Apify/Telethon.
+    const ttlSec = Number(res.ttl_sec);
+    if (ttlSec && ttlSec > 0) {
+      _ensureSessionsPolling(ttlSec * 1000);
+    } else {
+      _ensureSessionsPolling(10000);
+    }
+  } catch (e) {
+    console.error(e);
+    const metaEl = $("live-sessions-meta");
+    if (metaEl) {
+      metaEl.textContent = "Ошибка проверки сессий.";
+      metaEl.style.color = "#b91c1c";
     }
   }
+}
+
+  async function loadSecretsOverview() {
+  try {
+    const res = await apiFetch("/api/admin/secrets", { admin: true });
+    const fb = res.fb_cookies_updated_at
+      ? new Date(res.fb_cookies_updated_at).toLocaleString("ru-RU")
+      : "—";
+    const tg = res.tg_session_updated_at
+      ? new Date(res.tg_session_updated_at).toLocaleString("ru-RU")
+      : "—";
+
+    const metaEl = $("live-sessions-meta");
+    if (metaEl) {
+      _secretsMetaText = `Секреты: FB cookies обновлены ${fb} • TG сессия обновлена ${tg}`;
+      metaEl.textContent = _secretsMetaText;
+      metaEl.style.color = "#6b7280";
+    }
+
+    // Стартуем live-проверку после загрузки секретов.
+    await loadSessionsStatus(false);
+  } catch (e) {
+    console.error(e);
+    const metaEl = $("live-sessions-meta");
+    if (metaEl) {
+      metaEl.textContent = "Ошибка загрузки статусов.";
+      metaEl.style.color = "#b91c1c";
+    }
+  }
+}
+
 
   function initEvents() {
     $("btn-reload-jobs").addEventListener("click", loadJobs);
@@ -1354,6 +1435,7 @@
     $("tg-confirm-code-btn").addEventListener("click", tgAuthConfirm);
     $("tg-save-session-manual-btn").addEventListener("click", tgSaveSessionManual);
     $("tg-check-session-btn").addEventListener("click", tgCheckSession);
+    $("btn-sessions-check-now").addEventListener("click", () => loadSessionsStatus(true));
   }
 
   document.addEventListener("DOMContentLoaded", () => {
