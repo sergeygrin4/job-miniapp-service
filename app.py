@@ -3,7 +3,9 @@ import json
 import logging
 import re
 import asyncio
+import time
 from datetime import datetime, timezone, timedelta
+from typing import Any, Dict
 
 import requests
 from flask import Flask, request, jsonify, send_from_directory
@@ -40,6 +42,7 @@ _last_alert_sent_at: dict[str, datetime] = {}
 
 # ===== Job notify anti-flood (vacancies go immediately; protection only for abnormal burst) =====
 NOTIFY_CHAT_IDS_RAW = (os.getenv("NOTIFY_CHAT_IDS") or "").strip()
+ALERT_CHAT_IDS_RAW = (os.getenv("ALERT_CHAT_IDS") or "").strip()
 NOTIFY_PER_CHAT_PER_MINUTE = int(os.getenv("NOTIFY_PER_CHAT_PER_MINUTE") or "0")  # 0 = off
 
 NOTIFY_BURST_WINDOW_SECONDS = int(os.getenv("NOTIFY_BURST_WINDOW_SECONDS") or "60")
@@ -54,8 +57,22 @@ TG_AUTH_SERVICE_URL = (os.getenv("TG_AUTH_SERVICE_URL") or "").rstrip("/")
 TG_AUTH_SERVICE_TOKEN = os.getenv("TG_AUTH_SERVICE_TOKEN") or os.getenv("AUTH_TOKEN") or ""
 
 # ===== For checking tg session via Telethon =====
-TG_API_ID_DEFAULT = int(os.getenv("TG_API_ID_DEFAULT") or "0")
-TG_API_HASH_DEFAULT = os.getenv("TG_API_HASH_DEFAULT") or ""
+# Backwards-compatible: allow either *_DEFAULT or non-default names.
+TG_API_ID_DEFAULT = int(os.getenv("TG_API_ID_DEFAULT") or os.getenv("TG_API_ID") or "0")
+TG_API_HASH_DEFAULT = os.getenv("TG_API_HASH_DEFAULT") or os.getenv("TG_API_HASH") or ""
+
+# ===== Apify (used for FB cookies health-check) =====
+APIFY_TOKEN = (os.getenv("APIFY_TOKEN") or "").strip()
+APIFY_ACTOR_ID = (os.getenv("APIFY_ACTOR_ID") or "AtBpiepuIUNs2k2ku").strip()
+# A group URL where your FB account is definitely a member (best: a private group) to avoid false positives.
+FB_COOKIES_CHECK_GROUP_URL = (os.getenv("FB_COOKIES_CHECK_GROUP_URL") or "").strip()
+
+# ===== Sessions health cache =====
+SESSIONS_STATUS_TTL_SECONDS = int(os.getenv("SESSIONS_STATUS_TTL_SECONDS") or "30")
+_sessions_cache: dict[str, dict[str, object]] = {
+    "tg": {"ok": False, "detail": "not checked", "checked_at": None, "ts": 0.0},
+    "fb": {"ok": False, "detail": "not checked", "checked_at": None, "ts": 0.0},
+}
 
 
 # ---------------- Error handler (always JSON) ----------------
@@ -139,6 +156,38 @@ def _parse_notify_chat_ids() -> list[int]:
     return ids
 
 
+def _parse_alert_chat_ids() -> list[int]:
+    ids: list[int] = []
+    if ALERT_CHAT_IDS_RAW:
+        for part in ALERT_CHAT_IDS_RAW.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                ids.append(int(part))
+            except Exception:
+                logger.warning("Bad ALERT_CHAT_IDS entry ignored: %r", part)
+    return ids
+
+
+def _load_allowed_user_chat_ids() -> list[int]:
+    chat_ids: list[int] = []
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT user_id FROM allowed_users WHERE user_id IS NOT NULL")
+        rows = cur.fetchall() or []
+        conn.close()
+        for r in rows:
+            try:
+                chat_ids.append(int(r.get("user_id")))
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error("load allowed_users chat_ids failed: %s", e)
+    return chat_ids
+
+
 def _can_send_per_minute(chat_id: int) -> bool:
     if NOTIFY_PER_CHAT_PER_MINUTE <= 0:
         return True
@@ -203,8 +252,8 @@ def _normalize_alert_key(text: str) -> str:
 
 
 def send_alert_human(text: str):
-    if not BOT_TOKEN or not ADMIN_CHAT_ID:
-        logger.warning("Alert skipped (no BOT_TOKEN/ADMIN_CHAT_ID): %s", text)
+    if not BOT_TOKEN:
+        logger.warning("Alert skipped (no BOT_TOKEN): %s", text)
         return
 
     now = datetime.now(timezone.utc)
@@ -216,14 +265,32 @@ def send_alert_human(text: str):
 
     _last_alert_sent_at[key] = now
 
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={"chat_id": ADMIN_CHAT_ID, "text": text},
-            timeout=10,
-        )
-    except Exception as e:
-        logger.error("Failed to send alert: %s", e)
+    # recipients: ALERT_CHAT_IDS -> else allowed_users -> plus admin (if set)
+    chat_ids = _parse_alert_chat_ids()
+    if not chat_ids:
+        chat_ids = _load_allowed_user_chat_ids()
+    if ADMIN_CHAT_ID:
+        try:
+            chat_ids.append(int(ADMIN_CHAT_ID))
+        except Exception:
+            pass
+
+    chat_ids = list(dict.fromkeys([cid for cid in chat_ids if cid]))
+    if not chat_ids:
+        logger.warning("Alert skipped (no recipients): %s", text)
+        return
+
+    for chat_id in chat_ids:
+        try:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                json={"chat_id": chat_id, "text": text},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                logger.error("alert failed chat_id=%s http=%s body=%s", chat_id, resp.status_code, resp.text[:300])
+        except Exception as e:
+            logger.error("Failed to send alert chat_id=%s err=%s", chat_id, e)
 
 
 def _build_job_message(data: dict) -> tuple[str, dict | None]:
@@ -667,6 +734,85 @@ async def _tg_check_session_async(session_str: str):
         await client.disconnect()
 
 
+def _cache_get(name: str) -> dict[str, object] | None:
+    rec = _sessions_cache.get(name)
+    if not rec:
+        return None
+    try:
+        ts = float(rec.get("ts") or 0.0)
+    except Exception:
+        ts = 0.0
+    if time.time() - ts <= SESSIONS_STATUS_TTL_SECONDS:
+        return rec
+    return None
+
+
+def _cache_set(name: str, ok: bool, detail: str):
+    _sessions_cache[name] = {
+        "ok": bool(ok),
+        "detail": (detail or "").strip() or ("ok" if ok else "failed"),
+        "checked_at": datetime.utcnow().isoformat() + "Z",
+        "ts": time.time(),
+    }
+
+
+def _fb_check_cookies_via_apify(cookies: list) -> tuple[bool, str]:
+    """Validate FB cookies indirectly by running Apify actor once.
+
+    This avoids hitting Facebook directly from our backend.
+    For best signal, set FB_COOKIES_CHECK_GROUP_URL to a private group
+    where the account is a member.
+    """
+    if not APIFY_TOKEN:
+        return False, "APIFY_TOKEN not set"
+    if not FB_COOKIES_CHECK_GROUP_URL:
+        return False, "FB_COOKIES_CHECK_GROUP_URL not set"
+    if not isinstance(cookies, list) or not cookies:
+        return False, "fb_cookies_json empty"
+
+    # Prefer /runs with waitForFinish: we can read status+errorMessage without fetching dataset.
+    url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs"
+    params = {
+        "token": APIFY_TOKEN,
+        "waitForFinish": 60,
+        "memory": 512,
+    }
+
+    # NOTE: this actor's schema uses a dotted key for group URL (as you already saw in Apify UI).
+    actor_input: Dict[str, Any] = {
+        "cookie": cookies,
+        "minDelay": 1,
+        "maxDelay": 2,
+        "proxy": {"useApifyProxy": True},
+        "count": 1,
+        "sortType": "new_posts",
+        "scrapeGroupPosts.groupUrl": FB_COOKIES_CHECK_GROUP_URL,
+    }
+
+    # Optional proxy country: set only if you know the login geo.
+    proxy_country = (os.getenv("APIFY_PROXY_COUNTRY") or "").strip()
+    if proxy_country:
+        actor_input["proxy"]["apifyProxyCountry"] = proxy_country
+
+    try:
+        r = requests.post(url, params=params, json=actor_input, timeout=90)
+        if r.status_code >= 400:
+            return False, f"HTTP {r.status_code}: {r.text[:300]}"
+
+        j = r.json() or {}
+        run = (j.get("data") or {}) if isinstance(j, dict) else {}
+        status = (run.get("status") or "").upper()
+        err = (run.get("errorMessage") or "").strip()
+
+        if status == "SUCCEEDED":
+            return True, "ok"
+        if status:
+            return False, f"{status}: {err[:300]}".strip()
+        return False, "unexpected Apify response"
+    except Exception as e:
+        return False, str(e)
+
+
 @app.route("/api/admin/tg_session/check", methods=["GET"])
 def api_admin_tg_session_check():
     ok, err = _require_admin()
@@ -674,7 +820,7 @@ def api_admin_tg_session_check():
         return err
 
     if not TG_API_ID_DEFAULT or not TG_API_HASH_DEFAULT:
-        return jsonify({"ok": False, "reason": "TG_API_ID_DEFAULT/TG_API_HASH_DEFAULT not set"}), 200
+        return jsonify({"ok": False, "reason": "TG_API_ID/TG_API_HASH not set"}), 200
 
     row = get_secret("tg_session")
     session_str = (row.get("value") if row else "") or ""
@@ -687,6 +833,107 @@ def api_admin_tg_session_check():
     except Exception as e:
         logger.error("tg_session check failed: %s", e)
         return jsonify({"ok": False, "reason": "check_failed"}), 200
+
+
+@app.route("/api/admin/fb_cookies/check", methods=["GET"])
+def api_admin_fb_cookies_check():
+    ok, err = _require_admin()
+    if err:
+        return err
+
+    row = get_secret("fb_cookies_json")
+    cookies_json = (row.get("value") if row else "") or ""
+    try:
+        cookies = json.loads(cookies_json) if cookies_json else []
+    except Exception:
+        cookies = []
+
+    is_ok, detail = _fb_check_cookies_via_apify(cookies)
+    return jsonify({"ok": bool(is_ok), "detail": detail, "checked_at": datetime.utcnow().isoformat() + "Z"})
+
+
+def _compute_tg_status(force: bool = False) -> dict[str, object]:
+    if not force:
+        cached = _cache_get("tg")
+        if cached:
+            return {"ok": bool(cached.get("ok")), "detail": str(cached.get("detail") or "")}
+
+    if not TG_API_ID_DEFAULT or not TG_API_HASH_DEFAULT:
+        _cache_set("tg", False, "TG_API_ID/TG_API_HASH not set")
+        return {"ok": False, "detail": "TG_API_ID/TG_API_HASH not set"}
+
+    row = get_secret("tg_session")
+    session_str = (row.get("value") if row else "") or ""
+    if not session_str:
+        _cache_set("tg", False, "tg_session_empty")
+        return {"ok": False, "detail": "tg_session_empty"}
+
+    try:
+        res = asyncio.run(_tg_check_session_async(session_str))
+        if res.get("ok"):
+            me = res.get("me") or {}
+            uname = (me.get("username") or "") if isinstance(me, dict) else ""
+            detail = f"ok ({uname})" if uname else "ok"
+            _cache_set("tg", True, detail)
+            return {"ok": True, "detail": detail}
+        reason = str(res.get("reason") or "not_authorized")
+        _cache_set("tg", False, reason)
+        return {"ok": False, "detail": reason}
+    except Exception as e:
+        logger.error("tg session status failed: %s", e)
+        _cache_set("tg", False, "check_failed")
+        return {"ok": False, "detail": "check_failed"}
+
+
+def _compute_fb_status(force: bool = False) -> dict[str, object]:
+    if not force:
+        cached = _cache_get("fb")
+        if cached:
+            return {"ok": bool(cached.get("ok")), "detail": str(cached.get("detail") or "")}
+
+    row = get_secret("fb_cookies_json")
+    cookies_json = (row.get("value") if row else "") or ""
+    try:
+        cookies = json.loads(cookies_json) if cookies_json else []
+    except Exception:
+        cookies = []
+    is_ok, detail = _fb_check_cookies_via_apify(cookies)
+    _cache_set("fb", bool(is_ok), detail)
+    return {"ok": bool(is_ok), "detail": detail}
+
+
+@app.route("/api/admin/sessions/status", methods=["GET"])
+def api_admin_sessions_status():
+    ok, err = _require_admin()
+    if err:
+        return err
+
+    tg = _compute_tg_status(force=False)
+    fb = _compute_fb_status(force=False)
+
+    return jsonify({
+        "tg": tg,
+        "fb": fb,
+        "ttl_sec": SESSIONS_STATUS_TTL_SECONDS,
+        "server_time": datetime.utcnow().isoformat() + "Z",
+    })
+
+
+@app.route("/api/admin/sessions/check_now", methods=["POST"])
+def api_admin_sessions_check_now():
+    ok, err = _require_admin()
+    if err:
+        return err
+
+    tg = _compute_tg_status(force=True)
+    fb = _compute_fb_status(force=True)
+
+    return jsonify({
+        "tg": tg,
+        "fb": fb,
+        "ttl_sec": SESSIONS_STATUS_TTL_SECONDS,
+        "server_time": datetime.utcnow().isoformat() + "Z",
+    })
 
 
 @app.route("/api/admin/tg_auth/start", methods=["POST"])
