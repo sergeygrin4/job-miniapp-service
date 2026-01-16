@@ -756,27 +756,81 @@ def _cache_set(name: str, ok: bool, detail: str):
     }
 
 
-def _fb_check_cookies_via_apify(cookies: list) -> tuple[bool, str]:
-    """Validate FB cookies indirectly by running Apify actor once.
+def _pick_fb_group_url_from_db() -> str:
+    """
+    Если FB_COOKIES_CHECK_GROUP_URL не задан — берём первую enabled группу из БД.
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT group_id FROM fb_groups WHERE enabled=TRUE ORDER BY added_at DESC LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        gid = (row.get("group_id") if row else "") or ""
+        gid = gid.strip()
+        if not gid:
+            return ""
+        if gid.startswith("http://") or gid.startswith("https://"):
+            return gid
+        # если в БД просто id группы
+        return f"https://www.facebook.com/groups/{gid.lstrip('@')}"
+    except Exception:
+        return ""
 
-    This avoids hitting Facebook directly from our backend.
-    For best signal, set FB_COOKIES_CHECK_GROUP_URL to a private group
-    where the account is a member.
+
+def _fb_check_cookies_via_apify(cookies: list) -> tuple[bool, str]:
+    """
+    Проверяем cookies через Apify так же, как в fb_parser: run-sync-get-dataset-items.
+    Если Apify вернул 200 и JSON распарсился — cookies считаем валидными.
     """
     if not APIFY_TOKEN:
         return False, "APIFY_TOKEN not set"
-    if not FB_COOKIES_CHECK_GROUP_URL:
-        return False, "FB_COOKIES_CHECK_GROUP_URL not set"
     if not isinstance(cookies, list) or not cookies:
         return False, "fb_cookies_json empty"
 
-    # Prefer /runs with waitForFinish: we can read status+errorMessage without fetching dataset.
-    url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs"
-    params = {
-        "token": APIFY_TOKEN,
-        "waitForFinish": 60,
-        "memory": 512,
+    group_url = FB_COOKIES_CHECK_GROUP_URL or _pick_fb_group_url_from_db()
+    if not group_url:
+        return False, "FB_COOKIES_CHECK_GROUP_URL not set and no enabled fb_groups"
+
+    endpoint = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/run-sync-get-dataset-items"
+    params = {"token": APIFY_TOKEN}
+
+    actor_input: Dict[str, Any] = {
+        "cookie": cookies,
+        "minDelay": 1,
+        "maxDelay": 2,
+        "proxy": {"useApifyProxy": True},
+        "count": 1,
+        "sortType": "new_posts",
+        "scrapeGroupPosts.groupUrl": group_url,
     }
+
+    proxy_country = (os.getenv("APIFY_PROXY_COUNTRY") or "").strip()
+    if proxy_country:
+        actor_input["proxy"]["apifyProxyCountry"] = proxy_country
+
+    timeout_sec = int(os.getenv("APIFY_CHECK_TIMEOUT_SECONDS") or "120")
+
+    try:
+        r = requests.post(endpoint, params=params, json=actor_input, timeout=timeout_sec)
+        if r.status_code >= 400:
+            return False, f"HTTP {r.status_code}: {r.text[:300]}"
+
+        try:
+            data = r.json()
+        except Exception:
+            return False, "Apify returned non-JSON"
+
+        # data обычно list items
+        if isinstance(data, list):
+            return True, f"ok (items={len(data)})"
+        if isinstance(data, dict) and "items" in data and isinstance(data["items"], list):
+            return True, f"ok (items={len(data['items'])})"
+
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
+
 
     # NOTE: this actor's schema uses a dotted key for group URL (as you already saw in Apify UI).
     actor_input: Dict[str, Any] = {
@@ -1000,7 +1054,13 @@ def api_admin_tg_auth_confirm():
     # tg-auth-service возвращает string_session — сохраняем в parser_secrets как tg_session
     try:
         j = r.json() or {}
-        session_str = (j.get("string_session") or "").strip()
+        session_str = (
+    (j.get("string_session") or "")
+    or (j.get("session") or "")
+    or (j.get("tg_session") or "")
+    or (j.get("stringSession") or "")
+).strip()
+
         if session_str:
             set_secret("tg_session", session_str)
     except Exception:
