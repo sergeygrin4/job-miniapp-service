@@ -777,10 +777,43 @@ def _pick_fb_group_url_from_db() -> str:
     except Exception:
         return ""
 
+from urllib.parse import urlsplit, urlunsplit
+
+def _normalize_fb_group_url(raw: str) -> str:
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    # если в БД/в env просто id
+    if not raw.startswith("http://") and not raw.startswith("https://"):
+        return f"https://www.facebook.com/groups/{raw.lstrip('@').strip()}"
+    # чистим url: убираем query/fragment и m.facebook.com -> www.facebook.com
+    try:
+        u = urlsplit(raw)
+        netloc = u.netloc.replace("m.facebook.com", "www.facebook.com")
+        path = u.path.rstrip("/")
+        return urlunsplit((u.scheme, netloc, path, "", ""))
+    except Exception:
+        return raw
+
+def _pick_fb_group_url_from_db() -> str:
+    """
+    Берём любую enabled FB-группу из БД (самую свежую).
+    """
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT group_id FROM fb_groups WHERE enabled=TRUE ORDER BY added_at DESC LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        gid = ((row or {}).get("group_id") or "").strip()
+        return _normalize_fb_group_url(gid)
+    except Exception:
+        return ""
+
 
 def _fb_check_cookies_via_apify(cookies: list) -> tuple[bool, str]:
     """
-    Проверяем cookies через Apify так же, как в fb_parser: run-sync-get-dataset-items.
+    Проверяем cookies через Apify так же, как fb_parser: run-sync-get-dataset-items.
     Если Apify вернул 200 и JSON распарсился — cookies считаем валидными.
     """
     if not APIFY_TOKEN:
@@ -788,9 +821,10 @@ def _fb_check_cookies_via_apify(cookies: list) -> tuple[bool, str]:
     if not isinstance(cookies, list) or not cookies:
         return False, "fb_cookies_json empty"
 
-    group_url = FB_COOKIES_CHECK_GROUP_URL or _pick_fb_group_url_from_db()
+    # если env не задан — берём из БД первую enabled группу
+    group_url = _normalize_fb_group_url(FB_COOKIES_CHECK_GROUP_URL) or _pick_fb_group_url_from_db()
     if not group_url:
-        return False, "FB_COOKIES_CHECK_GROUP_URL not set and no enabled fb_groups"
+        return False, "no fb group for check (set FB_COOKIES_CHECK_GROUP_URL or add enabled fb_group)"
 
     endpoint = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/run-sync-get-dataset-items"
     params = {"token": APIFY_TOKEN}
@@ -802,7 +836,7 @@ def _fb_check_cookies_via_apify(cookies: list) -> tuple[bool, str]:
         "proxy": {"useApifyProxy": True},
         "count": 1,
         "sortType": "new_posts",
-        "scrapeGroupPosts.groupUrl": group_url,
+        "scrapeGroupPosts.groupUrl": group_url,  # dotted key
     }
 
     proxy_country = (os.getenv("APIFY_PROXY_COUNTRY") or "").strip()
@@ -816,20 +850,21 @@ def _fb_check_cookies_via_apify(cookies: list) -> tuple[bool, str]:
         if r.status_code >= 400:
             return False, f"HTTP {r.status_code}: {r.text[:300]}"
 
+        # если JSON распарсился — считаем куки валидными (даже если items=0)
         try:
             data = r.json()
         except Exception:
             return False, "Apify returned non-JSON"
 
-        # data обычно list items
         if isinstance(data, list):
             return True, f"ok (items={len(data)})"
-        if isinstance(data, dict) and "items" in data and isinstance(data["items"], list):
+        if isinstance(data, dict) and isinstance(data.get("items"), list):
             return True, f"ok (items={len(data['items'])})"
 
         return True, "ok"
     except Exception as e:
         return False, str(e)
+
 
 
     # NOTE: this actor's schema uses a dotted key for group URL (as you already saw in Apify UI).
