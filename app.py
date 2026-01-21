@@ -489,6 +489,16 @@ def api_groups_get():
     cur.execute("SELECT id, group_id, group_name, enabled, added_at FROM fb_groups ORDER BY added_at DESC")
     rows = cur.fetchall() or []
     conn.close()
+    # Backwards compatible: add computed "type" field without changing DB schema.
+    # Parsers use it to filter Facebook/Telegram sources.
+    for r in rows:
+        gid = (r.get("group_id") or "").strip().lower()
+        if gid.startswith("@") or "t.me/" in gid or "telegram.me/" in gid:
+            r["type"] = "telegram"
+        elif "facebook.com" in gid or "fb.com" in gid:
+            r["type"] = "facebook"
+        else:
+            r["type"] = "unknown"
     return jsonify({"groups": rows})
 
 
@@ -756,26 +766,6 @@ def _cache_set(name: str, ok: bool, detail: str):
     }
 
 
-def _pick_fb_group_url_from_db() -> str:
-    """
-    Если FB_COOKIES_CHECK_GROUP_URL не задан — берём первую enabled группу из БД.
-    """
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT group_id FROM fb_groups WHERE enabled=TRUE ORDER BY added_at DESC LIMIT 1")
-        row = cur.fetchone()
-        conn.close()
-        gid = (row.get("group_id") if row else "") or ""
-        gid = gid.strip()
-        if not gid:
-            return ""
-        if gid.startswith("http://") or gid.startswith("https://"):
-            return gid
-        # если в БД просто id группы
-        return f"https://www.facebook.com/groups/{gid.lstrip('@')}"
-    except Exception:
-        return ""
 
 from urllib.parse import urlsplit, urlunsplit
 
@@ -802,7 +792,18 @@ def _pick_fb_group_url_from_db() -> str:
     try:
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute("SELECT group_id FROM fb_groups WHERE enabled=TRUE ORDER BY added_at DESC LIMIT 1")
+        # fb_groups table stores both Telegram and Facebook sources.
+        # Exclude obvious Telegram entries when picking a group for FB cookies check.
+        cur.execute(
+            """
+            SELECT group_id
+            FROM fb_groups
+            WHERE enabled=TRUE
+              AND NOT (group_id ILIKE '@%' OR group_id ILIKE '%t.me/%' OR group_id ILIKE '%telegram.me/%')
+            ORDER BY added_at DESC
+            LIMIT 1
+            """
+        )
         row = cur.fetchone()
         conn.close()
         gid = ((row or {}).get("group_id") or "").strip()
@@ -864,43 +865,6 @@ def _fb_check_cookies_via_apify(cookies: list) -> tuple[bool, str]:
         return True, "ok"
     except Exception as e:
         return False, str(e)
-
-
-
-    # NOTE: this actor's schema uses a dotted key for group URL (as you already saw in Apify UI).
-    actor_input: Dict[str, Any] = {
-        "cookie": cookies,
-        "minDelay": 1,
-        "maxDelay": 2,
-        "proxy": {"useApifyProxy": True},
-        "count": 1,
-        "sortType": "new_posts",
-        "scrapeGroupPosts.groupUrl": FB_COOKIES_CHECK_GROUP_URL,
-    }
-
-    # Optional proxy country: set only if you know the login geo.
-    proxy_country = (os.getenv("APIFY_PROXY_COUNTRY") or "").strip()
-    if proxy_country:
-        actor_input["proxy"]["apifyProxyCountry"] = proxy_country
-
-    try:
-        r = requests.post(url, params=params, json=actor_input, timeout=90)
-        if r.status_code >= 400:
-            return False, f"HTTP {r.status_code}: {r.text[:300]}"
-
-        j = r.json() or {}
-        run = (j.get("data") or {}) if isinstance(j, dict) else {}
-        status = (run.get("status") or "").upper()
-        err = (run.get("errorMessage") or "").strip()
-
-        if status == "SUCCEEDED":
-            return True, "ok"
-        if status:
-            return False, f"{status}: {err[:300]}".strip()
-        return False, "unexpected Apify response"
-    except Exception as e:
-        return False, str(e)
-
 
 @app.route("/api/admin/tg_session/check", methods=["GET"])
 def api_admin_tg_session_check():
