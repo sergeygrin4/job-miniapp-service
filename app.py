@@ -32,7 +32,15 @@ PORT = int(os.getenv("PORT", "8080"))
 API_SECRET = (os.getenv("API_SECRET") or "").strip()
 
 # ===== Telegram bot (alerts + job notify) =====
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or ""
+BOT_TOKEN = (
+    os.getenv("TELEGRAM_BOT_TOKEN")
+    or os.getenv("BOT_TOKEN")
+    or os.getenv("TG_BOT_TOKEN")
+    or os.getenv("TELEGRAM_TOKEN")
+    or os.getenv("TG_TOKEN")
+    or os.getenv("bot_token")
+    or ""
+).strip()
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID") or ""
 ADMINS_RAW = os.getenv("ADMINS", "")
 
@@ -335,6 +343,9 @@ def _build_job_message(data: dict) -> tuple[str, dict | None]:
 def send_job_notification(data: dict):
     # вакансии: “единоразово” обеспечивается тем, что вызываем только после INSERT нового external_id
     if not BOT_TOKEN:
+        logger.warning(
+            "notify skipped (no BOT_TOKEN). Set TELEGRAM_BOT_TOKEN (preferred) or BOT_TOKEN."
+        )
         return
 
     chat_ids = _parse_notify_chat_ids()
@@ -362,6 +373,9 @@ def send_job_notification(data: dict):
 
     chat_ids = list(dict.fromkeys(chat_ids))
     if not chat_ids:
+        logger.warning(
+            "notify skipped (no recipients). Set NOTIFY_CHAT_IDS or ADMIN_CHAT_ID, or ensure users opened miniapp (POST /check_access fills allowed_users.user_id)."
+        )
         return
 
     message_text, reply_markup = _build_job_message(data)
@@ -583,7 +597,6 @@ def api_add_allowed_user():
     ok, err = _require_admin()
     if err:
         return err
-
     data = request.get_json(silent=True) or {}
     username = _username_norm(data.get("username"))
     if not username:
@@ -1006,7 +1019,7 @@ def api_admin_tg_auth_start():
     r = requests.post(
         f"{TG_AUTH_SERVICE_URL}/auth/start",
         headers={"Authorization": f"Bearer {TG_AUTH_SERVICE_TOKEN}"},
-        json={"phone": phone},
+        json={"phone": phone, "force_sms": bool((data or {}).get("force_sms", False))},
         timeout=30,
     )
     if r.status_code >= 400:
@@ -1054,11 +1067,12 @@ def api_admin_tg_auth_confirm():
     try:
         j = r.json() or {}
         session_str = (
-    (j.get("string_session") or "")
-    or (j.get("session") or "")
-    or (j.get("tg_session") or "")
-    or (j.get("stringSession") or "")
-).strip()
+            (j.get("string_session") or "")
+            or (j.get("session") or "")
+            or (j.get("tg_session") or "")
+            or (j.get("stringSession") or "")
+        ).strip()
+
 
         if session_str:
             set_secret("tg_session", session_str)
